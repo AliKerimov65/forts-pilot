@@ -4,72 +4,202 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.625rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    /* Дизайн-токены FORTS PILOT (design.md §1) — храним hex напрямую */
+    --bg-app: #0B0E13;
+    --bg-panel: #11151D;
+    --bg-panel-raised: #161C26;
+    --bg-inset: #0A0D12;
+    --border-subtle: #1E2632;
+    --border-strong: #2A3444;
+    --accent-yellow: #FFDD2D;
+    --accent-dim: #B89A1E;
+    --accent-glow: rgba(255, 221, 45, 0.15);
+    --long: #16C784;
+    --long-dim: rgba(22, 199, 132, 0.12);
+    --short: #EA3943;
+    --short-dim: rgba(234, 57, 67, 0.12);
+    --warn: #F5A524;
+    --info: #3B82F6;
+    --text-primary: #F2F4F7;
+    --text-secondary: #9AA4B2;
+    --text-muted: #5B6472;
+
+    /* shadcn/ui переменные (HSL), тёмная тема — единственная */
+    --background: 222 29% 6%;        /* #0B0E13 */
+    --foreground: 220 20% 96%;       /* #F2F4F7 */
+    --card: 220 26% 9%;              /* #11151D */
+    --card-foreground: 220 20% 96%;
+    --popover: 219 24% 12%;          /* #161C26 */
+    --popover-foreground: 220 20% 96%;
+    --primary: 50 100% 59%;          /* #FFDD2D */
+    --primary-foreground: 222 29% 6%;
+    --secondary: 219 24% 12%;
+    --secondary-foreground: 220 20% 96%;
+    --muted: 219 24% 12%;
+    --muted-foreground: 217 12% 65%; /* #9AA4B2 */
+    --accent: 219 24% 12%;           /* приподнятая панель для hover в меню */
+    --accent-foreground: 220 20% 96%;
+    --destructive: 356 81% 57%;      /* #EA3943 */
+    --destructive-foreground: 220 20% 96%;
+    --border: 216 26% 16%;           /* #1E2632 */
+    --input: 216 26% 16%;
+    --ring: 50 100% 59%;
+    --radius: 0.75rem;               /* 12px панели */
+    --sidebar-background: 222 29% 6%;
+    --sidebar-foreground: 217 12% 65%;
+    --sidebar-primary: 50 100% 59%;
+    --sidebar-primary-foreground: 222 29% 6%;
+    --sidebar-accent: 219 24% 12%;
+    --sidebar-accent-foreground: 220 20% 96%;
+    --sidebar-border: 216 26% 16%;
+    --sidebar-ring: 50 100% 59%;
   }
 
-  .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-}
-
-@layer base {
   * {
     @apply border-border;
   }
-  body {
-    @apply bg-background text-foreground;
+
+  html {
+    color-scheme: dark;
   }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-variant-numeric: tabular-nums;
+    /* Точечная сетка терминала поверх #0B0E13 (design.md §1) */
+    background-image: radial-gradient(circle, #1a212c 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-attachment: fixed;
+  }
+
+  /* Числа, цены, лоты — JetBrains Mono + tabular-nums (design.md §2) */
+  .mono {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Кастомные скроллбары: 8px, трек прозрачный, thumb border-strong (design.md §7) */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a4757;
+  }
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@layer utilities {
+  /* Флэш-подложки обновления цен (design.md §5 PriceTicker) */
+  @keyframes flash-long {
+    0% { background-color: var(--long-dim); }
+    100% { background-color: transparent; }
+  }
+  @keyframes flash-short {
+    0% { background-color: var(--short-dim); }
+    100% { background-color: transparent; }
+  }
+  .flash-long {
+    animation: flash-long 400ms ease-out;
+  }
+  .flash-short {
+    animation: flash-short 400ms ease-out;
+  }
+
+  /* Пульсация статус-точки соединения */
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 199, 132, 0.4); }
+    50% { opacity: 0.75; box-shadow: 0 0 0 4px rgba(22, 199, 132, 0); }
+  }
+  .pulse-dot {
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  /* Бегущая строка topbar: 30px/s, пауза при hover (design.md §6) */
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  .marquee-track {
+    animation: marquee 40s linear infinite;
+  }
+  .marquee-track:hover {
+    animation-play-state: paused;
+  }
+
+  /* Shimmer-скелетон 1200ms (design.md §5) */
+  @keyframes shimmer {
+    0% { background-position: -600px 0; }
+    100% { background-position: 600px 0; }
+  }
+  .shimmer {
+    background: linear-gradient(90deg, var(--bg-panel) 25%, var(--bg-panel-raised) 50%, var(--bg-panel) 75%);
+    background-size: 1200px 100%;
+    animation: shimmer 1200ms linear infinite;
+  }
+
+  /* Свечение primary-кнопок */
+  .glow-accent {
+    box-shadow: 0 4px 24px rgba(255, 221, 45, 0.35);
+  }
+
+  /* hero-glow градиент (design.md §1) */
+  .hero-glow {
+    background: radial-gradient(ellipse 60% 100% at 30% 0%, rgba(255, 221, 45, 0.07), transparent);
+  }
+}
+
+/* Reduced motion: отключаем marquee, пульсации, флэши (design.md §6) */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .pulse-dot,
+  .shimmer {
+    animation: none !important;
+  }
+  .flash-long,
+  .flash-short {
+    animation-duration: 1ms !important;
+  }
+}
+
+/* Splash-стили: графитовый фон до загрузки React (design.md §8) */
+#splash {
+  position: fixed;
+  inset: 0;
+  background: #0B0E13;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  z-index: 9999;
+}
+#splash .splash-bar {
+  width: 120px;
+  height: 2px;
+  background: #1E2632;
+  border-radius: 1px;
+  overflow: hidden;
+}
+#splash .splash-bar::after {
+  content: '';
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: #FFDD2D;
+  animation: splash-slide 900ms ease-in-out infinite;
+}
+@keyframes splash-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
 }

@@ -4,7 +4,38 @@ module.exports = {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Manrope', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+      },
       colors: {
+        // Дизайн-токены FORTS PILOT (design.md §1)
+        app: 'var(--bg-app)',
+        panel: 'var(--bg-panel)',
+        'panel-raised': 'var(--bg-panel-raised)',
+        inset: 'var(--bg-inset)',
+        subtle: 'var(--border-subtle)',
+        strong: 'var(--border-strong)',
+        yellow: {
+          DEFAULT: 'var(--accent-yellow)',
+          dim: 'var(--accent-dim)',
+          glow: 'var(--accent-glow)',
+        },
+        long: {
+          DEFAULT: 'var(--long)',
+          dim: 'var(--long-dim)',
+        },
+        short: {
+          DEFAULT: 'var(--short)',
+          dim: 'var(--short-dim)',
+        },
+        warn: 'var(--warn)',
+        info: 'var(--info)',
+        fg: {
+          DEFAULT: 'var(--text-primary)',
+          secondary: 'var(--text-secondary)',
+          muted: 'var(--text-muted)',
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
