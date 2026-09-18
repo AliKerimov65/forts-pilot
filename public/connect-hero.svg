@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480" fill="none">
+  <!-- Подключение: смартфон → лучи-данные → серверная стойка и биржевые свечи -->
+  <!-- смартфон -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="96" y="130" width="120" height="220" rx="18"/>
+    <line x1="136" y1="150" x2="176" y2="150"/>
+    <rect x="112" y="176" width="88" height="10" rx="5"/>
+    <rect x="112" y="198" width="64" height="10" rx="5"/>
+    <!-- мини-график на экране -->
+    <polyline points="112,300 132,278 152,290 172,262 200,272" stroke="#FFDD2D"/>
+    <circle cx="156" cy="330" r="8"/>
+  </g>
+  <!-- лучи-данные (жёлтые линии связи) -->
+  <g stroke="#FFDD2D" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 10">
+    <line x1="230" y1="180" x2="400" y2="120"/>
+    <line x1="230" y1="240" x2="400" y2="240"/>
+    <line x1="230" y1="300" x2="400" y2="360"/>
+  </g>
+  <!-- серверная стойка -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="420" y="80" width="130" height="150" rx="12"/>
+    <line x1="436" y1="116" x2="534" y2="116"/>
+    <line x1="436" y1="152" x2="534" y2="152"/>
+    <line x1="436" y1="188" x2="534" y2="188"/>
+    <circle cx="448" cy="98" r="4" stroke="#FFDD2D"/>
+    <circle cx="448" cy="134" r="4"/>
+    <circle cx="448" cy="170" r="4"/>
+    <circle cx="448" cy="206" r="4" stroke="#FFDD2D"/>
+    <line x1="460" y1="98" x2="520" y2="98"/>
+    <line x1="460" y1="134" x2="520" y2="134"/>
+    <line x1="460" y1="170" x2="520" y2="170"/>
+    <line x1="460" y1="206" x2="520" y2="206"/>
+  </g>
+  <!-- биржевые свечи -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round">
+    <line x1="436" y1="300" x2="436" y2="336"/>
+    <rect x="428" y="308" width="16" height="20" rx="2"/>
+    <line x1="468" y1="288" x2="468" y2="330"/>
+    <rect x="460" y="296" width="16" height="26" rx="2" stroke="#FFDD2D"/>
+    <line x1="500" y1="310" x2="500" y2="348"/>
+    <rect x="492" y="318" width="16" height="22" rx="2"/>
+    <line x1="532" y1="298" x2="532" y2="340"/>
+    <rect x="524" y="306" width="16" height="24" rx="2"/>
+  </g>
+  <!-- ключ-токен -->
+  <g stroke="#FFDD2D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="300" cy="398" r="14"/>
+    <line x1="312" y1="410" x2="344" y2="442"/>
+    <line x1="332" y1="430" x2="342" y2="420"/>
+    <line x1="340" y1="438" x2="350" y2="428"/>
+  </g>
+</svg>
