@@ -1,5 +1,8 @@
-// StatCard — панель метрики: метка, mono-значение, дельта, мини-спарклайн (design.md §5)
+// StatCard — панель метрики: метка, mono-значение, дельта, мини-спарклайн (design.md §5, v2-components.md §3)
+// v2: уровень L2 (bg-panel-raised + shadow-raised постоянно); hover — рамка border-strong БЕЗ translateY;
+// кликабельная карточка получает аффорданс ArrowUpRight в углу (opacity 0 → 1 на hover) и фокус-кольцо.
 import type { ReactNode } from 'react';
+import { ArrowUpRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Sparkline from '@/components/Sparkline';
 
@@ -37,13 +40,21 @@ export default function StatCard({
   return (
     <Comp
       onClick={onClick}
+      role={onClick ? 'link' : undefined}
       className={cn(
-        'group flex w-full flex-col gap-2 rounded-xl border border-subtle bg-panel p-4 text-left transition-all duration-200 md:p-5',
-        onClick && 'cursor-pointer hover:-translate-y-0.5 hover:border-strong',
-        !onClick && 'hover:-translate-y-0.5 hover:border-strong',
+        'group relative flex w-full flex-col gap-2 rounded-xl border border-subtle bg-panel-raised p-4 text-left shadow-raised transition-[border-color,box-shadow] duration-150 md:p-5',
+        // v2 §4.2: hover без translateY — рамка усиливается, тень уже есть (L2)
+        'hover:border-strong',
+        onClick && 'cursor-pointer',
         className,
       )}
     >
+      {onClick && (
+        <ArrowUpRight
+          className="absolute right-3 top-3 h-3.5 w-3.5 text-fg-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+          aria-hidden
+        />
+      )}
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium uppercase tracking-[0.08em] text-fg-secondary">{label}</span>
         {icon}

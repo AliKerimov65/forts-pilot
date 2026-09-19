@@ -4,15 +4,16 @@
 
 @layer base {
   :root {
-    /* Дизайн-токены FORTS PILOT (design.md §1) — храним hex напрямую */
+    /* Дизайн-токены FORTS PILOT v2 (design-v2.md §3) — храним hex напрямую */
     --bg-app: #0B0E13;
     --bg-panel: #11151D;
-    --bg-panel-raised: #161C26;
+    --bg-panel-raised: #181F2B;      /* v1 #161C26 → v2: больше отрыв L2 от L1 */
     --bg-inset: #0A0D12;
-    --border-subtle: #1E2632;
-    --border-strong: #2A3444;
+    --bg-overlay: #1B2431;           /* v2: уровень L3 (поповеры, модалки, sheet) */
+    --border-subtle: #212A38;        /* v1 #1E2632 → v2 */
+    --border-strong: #33405A;        /* v1 #2A3444 → v2 */
     --accent-yellow: #FFDD2D;
-    --accent-dim: #B89A1E;
+    --accent-dim: #C9A921;           /* v1 #B89A1E → v2 */
     --accent-glow: rgba(255, 221, 45, 0.15);
     --long: #16C784;
     --long-dim: rgba(22, 199, 132, 0.12);
@@ -21,37 +22,50 @@
     --warn: #F5A524;
     --info: #3B82F6;
     --text-primary: #F2F4F7;
-    --text-secondary: #9AA4B2;
-    --text-muted: #5B6472;
+    --text-secondary: #A4AEBD;       /* v1 #9AA4B2 → v2: контраст 4.5:1 */
+    --text-muted: #6B7686;           /* v1 #5B6472 → v2 */
+
+    /* v2: фокус-кольца (design-v2.md §2.6) */
+    --focus-ring: rgba(255, 221, 45, 0.55);
+    --focus-ring-danger: rgba(234, 57, 67, 0.55);
+
+    /* v2: тени z-уровней и свечения (design-v2.md §3.3) */
+    --shadow-raised: 0 8px 24px rgba(2, 4, 8, 0.35);
+    --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.5);
+    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+    --glow-danger: 0 4px 24px rgba(234, 57, 67, 0.3);
+
+    /* v2: микро-радиус (design-v2.md §3.2) */
+    --radius-xs: 4px;
 
     /* shadcn/ui переменные (HSL), тёмная тема — единственная */
     --background: 222 29% 6%;        /* #0B0E13 */
     --foreground: 220 20% 96%;       /* #F2F4F7 */
     --card: 220 26% 9%;              /* #11151D */
     --card-foreground: 220 20% 96%;
-    --popover: 219 24% 12%;          /* #161C26 */
+    --popover: 218 28% 13%;          /* #181F2B (panel-raised v2) */
     --popover-foreground: 220 20% 96%;
     --primary: 50 100% 59%;          /* #FFDD2D */
     --primary-foreground: 222 29% 6%;
-    --secondary: 219 24% 12%;
+    --secondary: 218 28% 13%;
     --secondary-foreground: 220 20% 96%;
-    --muted: 219 24% 12%;
-    --muted-foreground: 217 12% 65%; /* #9AA4B2 */
-    --accent: 219 24% 12%;           /* приподнятая панель для hover в меню */
+    --muted: 218 28% 13%;
+    --muted-foreground: 216 16% 69%; /* #A4AEBD (text-secondary v2) */
+    --accent: 218 28% 13%;           /* приподнятая панель для hover в меню */
     --accent-foreground: 220 20% 96%;
     --destructive: 356 81% 57%;      /* #EA3943 */
     --destructive-foreground: 220 20% 96%;
-    --border: 216 26% 16%;           /* #1E2632 */
-    --input: 216 26% 16%;
+    --border: 217 26% 17%;           /* #212A38 (border-subtle v2) */
+    --input: 217 26% 17%;
     --ring: 50 100% 59%;
     --radius: 0.75rem;               /* 12px панели */
     --sidebar-background: 222 29% 6%;
-    --sidebar-foreground: 217 12% 65%;
+    --sidebar-foreground: 216 16% 69%;
     --sidebar-primary: 50 100% 59%;
     --sidebar-primary-foreground: 222 29% 6%;
-    --sidebar-accent: 219 24% 12%;
+    --sidebar-accent: 218 28% 13%;
     --sidebar-accent-foreground: 220 20% 96%;
-    --sidebar-border: 216 26% 16%;
+    --sidebar-border: 217 26% 17%;
     --sidebar-ring: 50 100% 59%;
   }
 
@@ -61,6 +75,14 @@
 
   html {
     color-scheme: dark;
+  }
+
+  /* v2 §2.6: единый фокус-ринг для клавиатурной навигации —
+     двойное кольцо читается и на панелях, и на жёлтых кнопках */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg-app), 0 0 0 4px var(--focus-ring);
+    transition: box-shadow 80ms ease-out;
   }
 
   body {
@@ -153,6 +175,11 @@
     box-shadow: 0 4px 24px rgba(255, 221, 45, 0.35);
   }
 
+  /* v2 §3.3: свечение деструктивных контролов (аварийная кнопка, press-and-hold) */
+  .glow-danger {
+    box-shadow: var(--glow-danger);
+  }
+
   /* hero-glow градиент (design.md §1) */
   .hero-glow {
     background: radial-gradient(ellipse 60% 100% at 30% 0%, rgba(255, 221, 45, 0.07), transparent);
@@ -163,7 +190,8 @@
 @media (prefers-reduced-motion: reduce) {
   .marquee-track,
   .pulse-dot,
-  .shimmer {
+  .shimmer,
+  .animate-pulse {
     animation: none !important;
   }
   .flash-long,

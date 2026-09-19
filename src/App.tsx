@@ -1,6 +1,6 @@
 // App — корневой роутинг (паттерн B: AppShell с <Outlet/> + вложенные Route)
 import { useEffect, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import AppShell from '@/components/AppShell';
 import InstallPrompt, { trackVisit } from '@/components/InstallPrompt';
 import LockScreen from '@/components/LockScreen';
@@ -20,6 +20,15 @@ function RequireConnection({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Скролл окна наверх при смене роута (design-v2 §1.6) */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [pathname]);
+  return null;
+}
+
 export default function App() {
   useEffect(() => {
     trackVisit(); // счётчик визитов для InstallPrompt (показ после 2-го)
@@ -34,6 +43,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<RequireConnection><Dashboard /></RequireConnection>} />

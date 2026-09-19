@@ -9,11 +9,12 @@ module.exports = {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        // Дизайн-токены FORTS PILOT (design.md §1)
+        // Дизайн-токены FORTS PILOT v2 (design-v2.md §3)
         app: 'var(--bg-app)',
         panel: 'var(--bg-panel)',
         'panel-raised': 'var(--bg-panel-raised)',
         inset: 'var(--bg-inset)',
+        overlay: 'var(--bg-overlay)',
         subtle: 'var(--border-subtle)',
         strong: 'var(--border-strong)',
         yellow: {
@@ -89,6 +90,11 @@ module.exports = {
       },
       boxShadow: {
         xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        // v2 §3.3: тени z-уровней (L2/hover L1 / L3 / L0)
+        raised: 'var(--shadow-raised)',
+        overlay: 'var(--shadow-overlay)',
+        inset: 'var(--shadow-inset)',
+        'glow-danger': 'var(--glow-danger)',
       },
       keyframes: {
         "accordion-down": {

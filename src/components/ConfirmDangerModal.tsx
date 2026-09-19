@@ -80,7 +80,7 @@ export default function ConfirmDangerModal({
         >
           <motion.div
             className={cn(
-              'w-full max-w-[480px] rounded-t-2xl border border-subtle bg-panel-raised p-5 sm:rounded-xl',
+              'w-full max-w-[480px] rounded-t-2xl border border-strong bg-overlay p-5 shadow-overlay sm:rounded-xl',
             )}
             initial={{ opacity: 0, y: 40, scale: 1 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -113,7 +113,7 @@ export default function ConfirmDangerModal({
               {/* press-and-hold с круговым прогрессом */}
               <button
                 type="button"
-                className="relative flex h-11 flex-1 select-none items-center justify-center gap-2 overflow-hidden rounded-[10px] border border-short text-sm font-semibold text-short transition-colors hover:bg-short-dim active:bg-short-dim"
+                className="relative flex h-11 flex-1 select-none items-center justify-center gap-2 overflow-hidden rounded-[10px] border border-short text-sm font-semibold text-short transition-all duration-[120ms] hover:bg-short-dim hover:glow-danger active:bg-short-dim"
                 onPointerDown={startHold}
                 onPointerUp={stopHold}
                 onPointerLeave={stopHold}
