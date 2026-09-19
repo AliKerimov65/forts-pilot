@@ -627,7 +627,36 @@ export async function getOrders(): Promise<Order[]> {
 
 // ---------- OperationsService / SandboxService ----------
 
-/** Портфель: сводка + позиции */
+/**
+ * Класс инструмента из поля instrumentType ответов OperationsService
+ * (Positions/Portfolio: 'share' | 'etf' | 'bond' | 'currency' | 'futures' | 'option' | 'sp' | ...).
+ * Нужен как фолбэк для UI: тикер/класс потребители резолвят по instrumentUid из каталога,
+ * но если uid неизвестен каталогу, класс берём из этого поля.
+ */
+function mapPositionInstrumentType(raw?: string): InstrumentType | undefined {
+  switch ((raw ?? '').toLowerCase()) {
+    case 'share':
+      return 'stock';
+    case 'etf':
+      return 'etf';
+    case 'bond':
+      return 'bond';
+    case 'currency':
+      return 'currency';
+    case 'option':
+      return 'option';
+    case 'sp':
+    case 'index':
+    case 'commodity':
+      return 'index';
+    case 'futures':
+      return 'future';
+    default:
+      return undefined;
+  }
+}
+
+/** Портфель: сводка + позиции ВСЕХ классов (акции, ETF, валюты, облигации, фьючерсы) */
 export async function getPortfolio(): Promise<PortfolioSummary & { positions: Position[] }> {
   const { token, sandbox } = conn();
   const accountId = requireAccount();
@@ -642,6 +671,7 @@ export async function getPortfolio(): Promise<PortfolioSummary & { positions: Po
       quantity?: Quotation;
       averagePositionPrice?: MoneyValue;
       currentPrice?: MoneyValue;
+      currentNkd?: MoneyValue;
       expectedYield?: Quotation;
       varMargin?: MoneyValue;
       blockedLots?: Quotation;
@@ -653,23 +683,27 @@ export async function getPortfolio(): Promise<PortfolioSummary & { positions: Po
     { token, sandbox },
   );
   const total = quotationToNumber(res.totalAmountPortfolio);
-  const positions: Position[] = (res.positions ?? [])
-    .filter((p) => p.instrumentType === 'futures' || p.instrumentType === 'FUTURES' || p.instrumentType === undefined)
-    .map((p) => {
-      const qty = quotationToNumber(p.quantity);
-      const avg = quotationToNumber(p.averagePositionPrice);
-      return {
-        instrumentId: p.instrumentUid ?? p.figi ?? '',
-        figi: p.figi,
-        ticker: p.figi ?? '',
-        direction: qty >= 0 ? ('long' as const) : ('short' as const),
-        lots: Math.abs(Math.round(qty)),
-        avgPrice: avg,
-        currentPrice: quotationToNumber(p.currentPrice) || avg,
-        pnl: quotationToNumber(p.expectedYield),
-        margin: p.varMargin ? quotationToNumber(p.varMargin) : undefined,
-      };
-    });
+  const positions: Position[] = (res.positions ?? []).map((p) => {
+    const qty = quotationToNumber(p.quantity);
+    const avg = quotationToNumber(p.averagePositionPrice);
+    const type = mapPositionInstrumentType(p.instrumentType);
+    // НКД (currentNkd) приходит только по облигациям, ₽ на единицу
+    const nkd = quotationToNumber(p.currentNkd);
+    return {
+      instrumentId: p.instrumentUid ?? p.figi ?? '',
+      figi: p.figi,
+      ticker: p.figi ?? '',
+      direction: qty >= 0 ? ('long' as const) : ('short' as const),
+      lots: Math.abs(Math.round(qty)),
+      avgPrice: avg,
+      currentPrice: quotationToNumber(p.currentPrice) || avg,
+      // Для облигаций к доходности позиции добавляем накопленный НКД по всему объёму
+      pnl: quotationToNumber(p.expectedYield) + (type === 'bond' ? nkd * Math.abs(qty) : 0),
+      margin: p.varMargin ? quotationToNumber(p.varMargin) : undefined,
+      instrumentType: type,
+      nkd: type === 'bond' && nkd !== 0 ? nkd : undefined,
+    };
+  });
   const blocked = positions.reduce((acc, p) => acc + (p.margin ?? 0), 0);
   const cash = quotationToNumber(res.totalAmountCurrencies);
   return {
@@ -684,33 +718,52 @@ export async function getPortfolio(): Promise<PortfolioSummary & { positions: Po
   };
 }
 
-/** Позиции (OperationsService/GetPositions: futures[] + money[]) */
+/**
+ * Позиции (OperationsService/GetPositions).
+ * Ответ содержит позиции всех классов: securities[] (акции/ETF/облигации/валюты),
+ * futures[], options[]; money[] — свободный кэш, позицией не считается и сюда не входит.
+ * Контракт даёт только балансы; цены есть только у фьючерсов — для остальных
+ * avgPrice/currentPrice = 0 (актуальные цены потребители берут из котировок/портфеля).
+ */
 export async function getPositions(): Promise<Position[]> {
   const { token, sandbox } = conn();
   const accountId = requireAccount();
   const res = await callApi<{
+    securities?: Array<{ figi?: string; instrumentUid?: string; instrumentType?: string; balance?: string; blocked?: string }>;
     futures?: Array<{ figi?: string; instrumentUid?: string; balance?: string; blocked?: string; currentPrice?: Quotation; averagePositionPrice?: Quotation; varMargin?: MoneyValue }>;
+    options?: Array<{ figi?: string; instrumentUid?: string; balance?: string; blocked?: string }>;
   }>(
     sandbox ? 'SandboxService' : 'OperationsService',
     opsMethod('Positions'),
     { accountId },
     { token, sandbox },
   );
-  return (res.futures ?? []).map((f) => {
+  const base = (figi: string | undefined, uid: string | undefined, balance: number, type?: string): Position => ({
+    instrumentId: uid ?? figi ?? '',
+    figi,
+    ticker: figi ?? '',
+    direction: balance >= 0 ? 'long' : 'short',
+    lots: Math.abs(balance),
+    avgPrice: 0,
+    currentPrice: 0,
+    pnl: 0,
+    instrumentType: mapPositionInstrumentType(type),
+  });
+  const securities = (res.securities ?? []).map((s) =>
+    base(s.figi, s.instrumentUid, Number(s.balance ?? 0), s.instrumentType),
+  );
+  const futures = (res.futures ?? []).map((f) => {
     const balance = Number(f.balance ?? 0);
     const avg = quotationToNumber(f.averagePositionPrice);
     return {
-      instrumentId: f.instrumentUid ?? f.figi ?? '',
-      figi: f.figi,
-      ticker: f.figi ?? '',
-      direction: balance >= 0 ? ('long' as const) : ('short' as const),
-      lots: Math.abs(balance),
+      ...base(f.figi, f.instrumentUid, balance, 'futures'),
       avgPrice: avg,
       currentPrice: quotationToNumber(f.currentPrice) || avg,
-      pnl: 0,
       margin: f.varMargin ? quotationToNumber(f.varMargin) : undefined,
     };
   });
+  const options = (res.options ?? []).map((o) => base(o.figi, o.instrumentUid, Number(o.balance ?? 0), 'option'));
+  return [...securities, ...futures, ...options];
 }
 
 // ---------- SandboxService (только sandbox-контур) ----------

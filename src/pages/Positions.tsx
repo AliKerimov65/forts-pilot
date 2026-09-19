@@ -157,6 +157,8 @@ export default function Positions() {
           ...p,
           ticker: meta?.ticker ?? (p.ticker || p.instrumentId.slice(0, 8)),
           name: p.name ?? meta?.name,
+          // класс из каталога приоритетнее; фолбэк — instrumentType из ответа API
+          instrumentType: meta?.type ?? p.instrumentType,
         };
       });
       t.setPortfolio(pf);
@@ -207,7 +209,8 @@ export default function Positions() {
     () =>
       positions.filter((p) => {
         if (sourceFilter !== 'all' && positionSource(p).source !== (sourceFilter === 'robot' ? 'robot' : 'manual')) return false;
-        if (classFilter !== 'all' && metaMap.get(p.instrumentId)?.type !== classFilter) return false;
+        const pType = metaMap.get(p.instrumentId)?.type ?? p.instrumentType;
+        if (classFilter !== 'all' && pType !== classFilter) return false;
         return true;
       }),
     [positions, sourceFilter, classFilter, metaMap],
@@ -216,7 +219,7 @@ export default function Positions() {
   const classCounts = useMemo(() => {
     const counts = new Map<InstrumentType, number>();
     for (const p of positions) {
-      const t = metaMap.get(p.instrumentId)?.type;
+      const t = metaMap.get(p.instrumentId)?.type ?? p.instrumentType;
       if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
     }
     return counts;
