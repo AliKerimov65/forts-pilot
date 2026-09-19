@@ -27,7 +27,7 @@
 
 ## Типы (`src/types/`, реэкспорт из `@/types`)
 
-- `market.ts`: `Instrument {uid, figi, ticker, classCode, name, basicAsset, lot, currency, minPriceIncrement, expirationDate?, marginBuy?, marginSell?}`, `Candle {time(ms), open, high, low, close, volume, isComplete}`, `OrderBookLevel {price, quantity}`, `OrderBook {instrumentId, bids, asks, lastPrice, limitUp?, limitDown?, time}`, `Quote {instrumentId, price, delta, changePct?, time}`, `CandleInterval` (`CANDLE_INTERVAL_1_MIN|5_MIN|15_MIN|HOUR|DAY|WEEK`).
+- `market.ts`: `InstrumentType='stock'|'future'|'etf'|'currency'|'bond'|'option'|'index'`; `Instrument {uid, figi, ticker, classCode, name, basicAsset, lot, currency, minPriceIncrement, type, apiTradeAvailable, tradable, buyAvailable?, sellAvailable?, shortEnabled?, forQualInvestor?, tradingStatus?, weekendFlag?, isin?, expirationDate?, marginBuy?, marginSell?}` (все классы инструментов Т-Инвестиций; **индексы: `tradable=false` — только котировки, ордера запрещены, UI обязан блокировать Buy/Sell**), `Candle {time(ms), open, high, low, close, volume, isComplete}`, `OrderBookLevel {price, quantity}`, `OrderBook {instrumentId, bids, asks, lastPrice, limitUp?, limitDown?, time}`, `Quote {instrumentId, price, delta, changePct?, time}`, `CandleInterval` (`CANDLE_INTERVAL_1_MIN|5_MIN|15_MIN|HOUR|DAY|WEEK`).
 - `trading.ts`: `Direction='long'|'short'`, `Position {instrumentId, figi?, ticker, name?, direction, lots, avgPrice, currentPrice, pnl, margin?}`, `OrderStatus='new'|'partially_filled'|'filled'|'cancelled'|'rejected'`, `Order {orderId, accountId, instrumentId, ticker, direction, lotsRequested, lotsExecuted, price?, orderType:'limit'|'market', status, time, message?}`, `Trade {id, orderId?, instrumentId, ticker, direction, lots, price, commission?, pnl?, source:'manual'|'robot', robotId?, robotName?, time}`, `JournalEventType='trade'|'order'|'sl'|'tp'|'robot'|'risk'|'system'`, `JournalEvent {id, type, text, amount?, robotId?, instrumentId?, time}`, `PortfolioSummary {totalAmount, cash, freeMargin, blockedMargin, dayPnl, dayPnlPct, expectedYieldPct?}`, `EquityPoint {time, equity, benchmark?}`.
 - `robot.ts`: `RobotStrategy='grid'|'signal'`, `RobotStatus='off'|'running'|'paused'|'error'`, `GridParams {upperBound, lowerBound, levels, lotsPerLevel}`, `SignalParams {signalType, timeframe, lots, stopLossPts?, takeProfitPts?}`, `RobotParams` (union по strategy), `RobotStats {dayPnl, totalPnl, trades, winRate(0..1), allocatedCapital, lastStartedAt?}`, `Robot {id, name, strategy, instrumentId, ticker, status, errorMessage?, params, stats, createdAt}`.
 - `account.ts`: `Account {id, name, type, status, openedDate?, accessLevel?}`, `AppMode='sandbox'|'live'`, `ConnectionStatus='online'|'offline'|'error'|'connecting'`.
@@ -45,26 +45,51 @@
 
 ### services.ts (режим sandbox/live выбирается АВТОМАТИЧЕСКИ из connection-стора; требуют токен, иначе throw)
 - `getAccounts(): Promise<Account[]>`
-- `getFutures(): Promise<Instrument[]>`
-- `findInstrument(query: string): Promise<Instrument[]>`
-- `getFuturesMargin(instrumentId): Promise<{buy: number, sell: number}>`
+- Списки по классам (INSTRUMENT_STATUS_BASE): `getFutures()`, `getShares()`, `getEtfs()`, `getCurrencies()`, `getBonds()` — все `Promise<Instrument[]>`
+- `getOptionsBy(basicAssetUid: string): Promise<Instrument[]>` — опционы ТОЛЬКО по базовому активу (фильтр обязателен, «все опционы» получить нельзя)
+- `getIndices(): Promise<Instrument[]>` — индексы/индикативы (Indicatives); `tradable=false`, только котировки
+- `findInstrument(query: string): Promise<Instrument[]>` — поиск только по фьючерсам (legacy)
+- `findInstrumentAll(query: string): Promise<Instrument[]>` — поиск по ВСЕМ классам (FindInstrument без instrumentKind)
+- `mapInstrumentKind(kind?: string): InstrumentType` — маппинг enum API (`INSTRUMENT_TYPE_*`) → класс
+- `getFuturesMargin(instrumentId): Promise<{buy: number, sell: number}>` — ГО фьючерса
+- `getMarginAttributes(): Promise<MarginAttributes>` — маржа ПО СЧЁТУ (UsersService!): `{liquidPortfolio, startingMargin, minimalMargin, fundsSufficiencyLevel, amountOfMissingFunds, correctedMargin}` (все ₽, кроме fundsSufficiencyLevel)
 - `getCandles(instrumentId, from: Date, to: Date, interval: CandleInterval, limit?): Promise<Candle[]>`
-- `getOrderBook(instrumentId, depth=20): Promise<OrderBook>`
-- `getLastPrices(instrumentIds: string[]): Promise<Quote[]>`
-- `postOrder(params: PostOrderParams): Promise<PostOrderResult>` — `PostOrderParams {instrumentId, direction, lots, orderType:'limit'|'market', price?, orderId?}`; `PostOrderResult {orderId, status, lotsRequested, lotsExecuted, executedPrice?, commission?, message?}`. В sandbox-режиме уходит в `SandboxService/PostSandboxOrder`.
+- `getOrderBook(instrumentId, depth=20): Promise<OrderBook>` — ⚠️ для индексов стакана нет, не вызывать
+- `getLastPrices(instrumentIds: string[]): Promise<Quote[]>` — работает и для индексов
+- `getTradingStatus(instrumentId): Promise<TradingStatusInfo>` — `{instrumentId, tradingStatus, limitOrderAvailable, marketOrderAvailable, bestpriceOrderAvailable, onlyBestPrice, tradingNow}`; «торгуется сейчас» = `tradingNow` + флаги доступных типов заявок
+- `getTradingSchedules(from: Date, to: Date, exchange?): Promise<TradingSchedule[]>` — расписание площадок (`{exchange, days: TradingScheduleDay[]}`)
+- `postOrder(params: PostOrderParams): Promise<PostOrderResult>` — `PostOrderParams {instrumentId, direction, lots, orderType:'limit'|'market'|'bestprice', price?, orderId?, instrument?, priceType?:'point'|'currency', confirmMarginTrade?}`; `PostOrderResult {orderId, status, lotsRequested, lotsExecuted, executedPrice?, commission?, message?}`. **`lots` — в ЛОТАХ для всех классов**. Передайте `instrument` — валидация (неторгуемый индекс/недоступная покупка → понятная ошибка ДО вызова API) и авто-выбор priceType (фьючерсы/облигации — POINT, акции/ETF/валюты — CURRENCY). В sandbox-режиме уходит в `SandboxService/PostSandboxOrder`.
 - `cancelOrder(orderId): Promise<void>`
 - `getOrders(): Promise<Order[]>`
 - `getPortfolio(): Promise<PortfolioSummary & {positions: Position[]}>`
 - `getPositions(): Promise<Position[]>`
 - `openSandboxAccount(name?): Promise<string>` (accountId), `sandboxPayIn(accountId, amountRub): Promise<void>`, `postSandboxOrder(accountId, params): Promise<PostOrderResult>` — явные sandbox-вызовы.
 
+### instruments.ts (хелперы по классам)
+- `instrumentTypeLabel(type): string` — рус.: Акция/Фьючерс/Индекс/ETF/Валюта/Облигация/Опцион
+- `isTradable(i): boolean` — `tradable && apiTradeAvailable` (индексы → false)
+- `priceStep(i): number` — шаг цены (дефолт 1)
+- `qtyToUnits(i, lots): number` / `unitsToQty(i, units): number` — лоты ↔ штуки
+- `priceDigits(i): number`, `roundPriceToStep(i, price): number`, `formatInstrumentPrice(i, price): string` — цена по minPriceIncrement
+- `isTradingNow(i): boolean` — tradingStatus ∈ {NORMAL_TRADING, DEALER_NORMAL_TRADING}
+
+### Правила для UI по классам
+1. **Индексы (`type==='index'`) — только котировки**: свечи/last price есть, стакана и ленты нет, ордера ЗАПРЕЩЕНЫ (UI обязан скрывать/блокировать Buy/Sell; `postOrder` с `instrument` тоже бросит ошибку).
+2. Доступность: проверяйте `isTradable(i)`, `buyAvailable/sellAvailable`, `shortEnabled` (false → блокировать SELL без покрытия), `forQualInvestor`, `tradingStatus`/`getTradingStatus()` (флаги limit/market/bestprice, `onlyBestPrice`).
+3. Облигации: цена — в % от номинала. Валюты вне сессии — режим дилера, только BESTPRICE (`onlyBestPrice`).
+4. Количество в заявках — всегда лоты; штуки = `qtyToUnits(i, lots)`.
+
 ### polling.ts
 - `usePolling(fetcher: () => Promise<void>|void, {intervalMs, enabled?, immediate?}, onError?)` — пауза на скрытой вкладке, защита от наложения запросов.
 - `POLLING_DEFAULTS = {prices: 3000, positions: 5000}`.
 
 ### mock.ts (детерминированные mock-данные; демо-режим и fallback)
-- `MOCK_INSTRUMENTS: Instrument[]` (Si, BR, IMOEXF, RTSI, GAZP; uid вида `mock-uid-si`)
-- `mockGetFutures()`, `mockFindInstrument(q)`, `mockGetCandles(uid, interval?, count=120)`, `mockGetOrderBook(uid, depth=10)`, `mockGetLastPrices(uids)` (сдвигает рандомволк — для поллинга), `mockGetPositions()`, `mockGetPortfolio()`, `mockGetEquitySeries('1D'|'1W'|'1M'|'3M'|'ALL')`, `mockGetTrades()`, `mockGetJournalEvents()`, `mockGetRobots()`, `seededRandom(seed)`.
+- Каталоги: `MOCK_INSTRUMENTS` (фьючерсы: Si, BR, IMOEXF, RTSI, GAZP; uid вида `mock-uid-si` — НЕ менять), `MOCK_SHARES` (SBER, GAZP, LKOH, YDEX, ROSN, MGNT), `MOCK_ETFS` (TMOS, SBMX), `MOCK_CURRENCIES` (USD000UTSTOM, CNYRUB_TOM), `MOCK_INDICES` (IMOEX, RTSI, RGBI — `tradable=false`), `MOCK_BONDS` (SU26238RMFS4, SU26243RMFS4), `MOCK_OPTIONS` (SI91250CE, SI91250PE), `MOCK_ALL_INSTRUMENTS` (всё вместе). uid не-фьючерсов: `mock-uid-{type}-{ticker}`.
+- По классам: `mockGetFutures()`, `mockGetShares()`, `mockGetEtfs()`, `mockGetCurrencies()`, `mockGetBonds()`, `mockGetOptionsBy(basicAssetUid?)`, `mockGetIndices()`, `mockGetAllInstruments()`
+- Поиск: `mockFindInstrument(q)` (фьючерсы), `mockFindInstrumentAll(q)` (все классы, в т.ч. по ISIN)
+- Маркетдата (работают для ЛЮБОГО uid из каталога, seed от тикера): `mockGetCandles(uid, interval?, count=120)`, `mockGetOrderBook(uid, depth=10)`, `mockGetLastPrices(uids)` (сдвигает рандомволк — для поллинга)
+- Статусы/маржа/расписание: `mockGetTradingStatus(uid)`, `mockGetMarginAttributes()`, `mockGetTradingSchedules()`
+- Прочее: `mockGetPositions()`, `mockGetPortfolio()`, `mockGetEquitySeries('1D'|'1W'|'1M'|'3M'|'ALL')`, `mockGetTrades()`, `mockGetJournalEvents()`, `mockGetRobots()`, `seededRandom(seed)`.
 - Паттерн: `const useMock = !useConnectionStore(s => s.token)` → mock-функции вместо services.
 
 ## Сторы (zustand, persist в localStorage)
@@ -75,8 +100,8 @@
 Хелперы: `maskedToken(token)`, `selectIsConnected(s)` (токен ИЛИ demoMode — селектор для гейтов).
 
 ### `@/store/market` — `useMarketStore`
-Поля: `instruments: Instrument[]`, `selectedInstrumentId: string|null`, `quotes: Record<uid, {price, delta, changePct, time}>`, `candles: Record<uid, Candle[]>`, `orderBook: OrderBook|null`.
-Экшены: `setInstruments`, `selectInstrument(uid)`, `updateQuotes(Quote[])`, `updateQuote(uid, price, changePct?)`, `setCandles(uid, candles)`, `setOrderBook`.
+Поля: `instruments: Instrument[]` (все классы), `selectedInstrumentId: string|null`, `quotes: Record<uid, {price, delta, changePct, time}>`, `candles: Record<uid, Candle[]>`, `orderBook: OrderBook|null`, `instrumentFilter: InstrumentType|'all'` (дефолт `'all'`).
+Экшены: `setInstruments`, `selectInstrument(uid)`, `setInstrumentFilter(filter)`, `updateQuotes(Quote[])`, `updateQuote(uid, price, changePct?)`, `setCandles(uid, candles)`, `setOrderBook`.
 
 ### `@/store/trading` — `useTradingStore`
 Поля: `positions: Position[]`, `orders: Order[]`, `trades: Trade[]`, `events: JournalEvent[]` (новые сверху, лимит 200), `portfolio: PortfolioSummary|null`, `equity: Record<period, EquityPoint[]>`, `seeded: boolean`.

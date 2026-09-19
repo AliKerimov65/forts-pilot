@@ -1,7 +1,7 @@
 // Детерминированные mock-данные FORTS (режим «Демо без токена» и fallback при ошибках сети)
 // Рандомволк с фиксированным seed — данные стабильны между перезагрузками в пределах сессии.
 
-import type { Candle, CandleInterval, Instrument, OrderBook, OrderBookLevel, Quote } from '@/types/market';
+import type { Candle, CandleInterval, Instrument, InstrumentType, OrderBook, OrderBookLevel, Quote } from '@/types/market';
 import type { EquityPoint, JournalEvent, PortfolioSummary, Position, Trade } from '@/types/trading';
 
 /** Детерминированный PRNG (mulberry32) */
@@ -23,51 +23,142 @@ function hashCode(s: string): number {
   return Math.abs(h);
 }
 
-/** Базовые параметры мок-инструментов */
-const MOCK_SPECS: Array<{
+/** Базовые параметры мок-инструмента */
+interface MockSpec {
+  type: InstrumentType;
   ticker: string;
   name: string;
   basicAsset: string;
+  classCode: string;
+  currency: string;
   basePrice: number;
   minStep: number;
   lot: number;
-  margin: number;
   volatility: number; // относительная волатильность на тик
-}> = [
-  { ticker: 'Si', name: 'Доллар США / рубль', basicAsset: 'USD', basePrice: 91250, minStep: 1, lot: 1, margin: 14200, volatility: 0.0006 },
-  { ticker: 'BR', name: 'Нефть Brent', basicAsset: 'Brent', basePrice: 68.42, minStep: 0.01, lot: 1, margin: 6100, volatility: 0.0011 },
-  { ticker: 'IMOEXF', name: 'Индекс МосБиржи', basicAsset: 'IMOEX', basePrice: 3212.5, minStep: 0.5, lot: 1, margin: 5800, volatility: 0.0008 },
-  { ticker: 'RTSI', name: 'Индекс РТС', basicAsset: 'RTSI', basePrice: 1124.8, minStep: 0.1, lot: 1, margin: 7300, volatility: 0.001 },
-  { ticker: 'GAZP', name: 'Газпром', basicAsset: 'GAZP', basePrice: 18234, minStep: 1, lot: 1, margin: 4100, volatility: 0.0009 },
+  margin?: number;
+  shortEnabled?: boolean;
+  forQualInvestor?: boolean;
+  weekendFlag?: boolean;
+  isin?: string;
+  /** Дата экспирации (фьючерсы/опционы) */
+  withExpiration?: boolean;
+}
+
+/** uid инструмента: фьючерсы — legacy-схема (mock-uid-si), остальные классы — с префиксом типа */
+function specUid(s: MockSpec): string {
+  if (s.type === 'future') return `mock-uid-${s.ticker.toLowerCase()}`;
+  return `mock-uid-${s.type}-${s.ticker.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+}
+
+function specToInstrument(s: MockSpec, figiNum: number): Instrument {
+  const apiTradeAvailable = s.type !== 'index';
+  return {
+    uid: specUid(s),
+    figi: `MOCK${String(figiNum).padStart(7, '0')}`,
+    ticker: s.ticker,
+    classCode: s.classCode,
+    name: s.name,
+    basicAsset: s.basicAsset,
+    lot: s.lot,
+    currency: s.currency,
+    minPriceIncrement: s.minStep,
+    type: s.type,
+    apiTradeAvailable,
+    tradable: apiTradeAvailable,
+    buyAvailable: apiTradeAvailable,
+    sellAvailable: apiTradeAvailable,
+    shortEnabled: s.shortEnabled ?? (s.type === 'future' || s.type === 'stock'),
+    forQualInvestor: s.forQualInvestor ?? false,
+    weekendFlag: s.weekendFlag ?? false,
+    tradingStatus: 'SECURITY_TRADING_STATUS_NORMAL_TRADING',
+    isin: s.isin,
+    expirationDate: s.withExpiration ? new Date(Date.now() + 45 * 86400000).toISOString() : undefined,
+    marginBuy: s.margin,
+    marginSell: s.margin,
+  };
+}
+
+// ---------- спецификации по классам ----------
+
+/** Фьючерсы FORTS (исходный набор — НЕ менять, на него завязаны позиции/роботы/сделки) */
+const FUTURE_SPECS: MockSpec[] = [
+  { type: 'future', ticker: 'Si', name: 'Доллар США / рубль', basicAsset: 'USD', classCode: 'SPBFUT', currency: 'rub', basePrice: 91250, minStep: 1, lot: 1, margin: 14200, volatility: 0.0006, withExpiration: true },
+  { type: 'future', ticker: 'BR', name: 'Нефть Brent', basicAsset: 'Brent', classCode: 'SPBFUT', currency: 'rub', basePrice: 68.42, minStep: 0.01, lot: 1, margin: 6100, volatility: 0.0011, withExpiration: true },
+  { type: 'future', ticker: 'IMOEXF', name: 'Индекс МосБиржи', basicAsset: 'IMOEX', classCode: 'SPBFUT', currency: 'rub', basePrice: 3212.5, minStep: 0.5, lot: 1, margin: 5800, volatility: 0.0008, withExpiration: true },
+  { type: 'future', ticker: 'RTSI', name: 'Индекс РТС', basicAsset: 'RTSI', classCode: 'SPBFUT', currency: 'rub', basePrice: 1124.8, minStep: 0.1, lot: 1, margin: 7300, volatility: 0.001, withExpiration: true },
+  { type: 'future', ticker: 'GAZP', name: 'Газпром', basicAsset: 'GAZP', classCode: 'SPBFUT', currency: 'rub', basePrice: 18234, minStep: 1, lot: 1, margin: 4100, volatility: 0.0009, withExpiration: true },
 ];
 
-/** Мок-фьючерсы FORTS */
-export const MOCK_INSTRUMENTS: Instrument[] = MOCK_SPECS.map((s, i) => ({
-  uid: `mock-uid-${s.ticker.toLowerCase()}`,
-  figi: `MOCK${String(i + 1).padStart(7, '0')}`,
-  ticker: s.ticker,
-  classCode: 'SPBFUT',
-  name: s.name,
-  basicAsset: s.basicAsset,
-  lot: s.lot,
-  currency: 'rub',
-  minPriceIncrement: s.minStep,
-  expirationDate: new Date(Date.now() + 45 * 86400000).toISOString(),
-  marginBuy: s.margin,
-  marginSell: s.margin,
-}));
+/** Акции (TQBR) */
+const SHARE_SPECS: MockSpec[] = [
+  { type: 'stock', ticker: 'SBER', name: 'Сбер Банк', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 301.25, minStep: 0.01, lot: 1, volatility: 0.0009, isin: 'RU0009029540' },
+  { type: 'stock', ticker: 'GAZP', name: 'Газпром', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 178.34, minStep: 0.01, lot: 1, volatility: 0.001, isin: 'RU0007661625' },
+  { type: 'stock', ticker: 'LKOH', name: 'Лукойл', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 7452, minStep: 1, lot: 1, volatility: 0.0008, isin: 'RU0009024277' },
+  { type: 'stock', ticker: 'YDEX', name: 'Яндекс', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 4348.5, minStep: 0.5, lot: 1, volatility: 0.0012, isin: 'RU000A107T19' },
+  { type: 'stock', ticker: 'ROSN', name: 'Роснефть', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 512.35, minStep: 0.05, lot: 1, volatility: 0.0009, isin: 'RU000A0J2Q06' },
+  { type: 'stock', ticker: 'MGNT', name: 'Магнит', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 5118, minStep: 1, lot: 1, volatility: 0.0011, isin: 'RU000A0JKQU8' },
+];
 
-const specByUid = new Map(MOCK_INSTRUMENTS.map((ins, i) => [ins.uid, MOCK_SPECS[i]]));
+/** ETF/БПИФ (TQTF) */
+const ETF_SPECS: MockSpec[] = [
+  { type: 'etf', ticker: 'TMOS', name: 'Тинькофф iMOEX', basicAsset: 'IMOEX', classCode: 'TQTF', currency: 'rub', basePrice: 6.48, minStep: 0.01, lot: 1, volatility: 0.0007, isin: 'RU000A101X76' },
+  { type: 'etf', ticker: 'SBMX', name: 'Сбербанк — МосБиржи', basicAsset: 'IMOEX', classCode: 'TQTF', currency: 'rub', basePrice: 1892.5, minStep: 0.5, lot: 1, volatility: 0.0007, isin: 'RU000A101X84' },
+];
+
+/** Валютные пары (CETS; торгуются и по выходным у дилера — weekendFlag) */
+const CURRENCY_SPECS: MockSpec[] = [
+  { type: 'currency', ticker: 'USD000UTSTOM', name: 'Доллар США / рубль', basicAsset: 'USD', classCode: 'CETS', currency: 'rub', basePrice: 91.35, minStep: 0.0025, lot: 1000, volatility: 0.0005, weekendFlag: true, isin: 'RUBUSD' },
+  { type: 'currency', ticker: 'CNYRUB_TOM', name: 'Юань / рубль', basicAsset: 'CNY', classCode: 'CETS', currency: 'rub', basePrice: 11.385, minStep: 0.001, lot: 1000, volatility: 0.0006, weekendFlag: true, isin: 'RUBCNY' },
+];
+
+/** Индексы — НЕ торгуются (tradable=false), только котировки */
+const INDEX_SPECS: MockSpec[] = [
+  { type: 'index', ticker: 'IMOEX', name: 'Индекс МосБиржи', basicAsset: '', classCode: 'TQBR', currency: 'rub', basePrice: 3215.4, minStep: 0.01, lot: 1, volatility: 0.0007 },
+  { type: 'index', ticker: 'RTSI', name: 'Индекс РТС', basicAsset: '', classCode: 'TQBR', currency: 'usd', basePrice: 1125.6, minStep: 0.01, lot: 1, volatility: 0.001 },
+  { type: 'index', ticker: 'RGBI', name: 'Индекс гособлигаций RGBI', basicAsset: '', classCode: 'TQOB', currency: 'rub', basePrice: 118.45, minStep: 0.01, lot: 1, volatility: 0.0003 },
+];
+
+/** Облигации (TQOB/TQCB; цена — в % от номинала) */
+const BOND_SPECS: MockSpec[] = [
+  { type: 'bond', ticker: 'SU26238RMFS4', name: 'ОФЗ 26238', basicAsset: '', classCode: 'TQOB', currency: 'rub', basePrice: 78.42, minStep: 0.001, lot: 1, volatility: 0.0003, isin: 'RU000A1038V6' },
+  { type: 'bond', ticker: 'SU26243RMFS4', name: 'ОФЗ 26243', basicAsset: '', classCode: 'TQOB', currency: 'rub', basePrice: 96.51, minStep: 0.001, lot: 1, volatility: 0.0003, isin: 'RU000A106Z43' },
+];
+
+/** Опционы (SPBOPT, маржируемые; базовый актив — фьючерс Si) */
+const OPTION_SPECS: MockSpec[] = [
+  { type: 'option', ticker: 'SI91250CE', name: 'Опцион колл Si 91250', basicAsset: 'Si', classCode: 'SPBOPT', currency: 'rub', basePrice: 2150, minStep: 10, lot: 1, volatility: 0.004, margin: 9800, shortEnabled: false, withExpiration: true },
+  { type: 'option', ticker: 'SI91250PE', name: 'Опцион пут Si 91250', basicAsset: 'Si', classCode: 'SPBOPT', currency: 'rub', basePrice: 2380, minStep: 10, lot: 1, volatility: 0.004, margin: 10200, shortEnabled: false, withExpiration: true },
+];
+
+const ALL_SPECS: MockSpec[] = [
+  ...FUTURE_SPECS, ...SHARE_SPECS, ...ETF_SPECS, ...CURRENCY_SPECS, ...INDEX_SPECS, ...BOND_SPECS, ...OPTION_SPECS,
+];
+
+/** Мок-фьючерсы FORTS (исходный MOCK_INSTRUMENTS — обратная совместимость) */
+export const MOCK_INSTRUMENTS: Instrument[] = FUTURE_SPECS.map((s, i) => specToInstrument(s, i + 1));
+export const MOCK_SHARES: Instrument[] = SHARE_SPECS.map((s, i) => specToInstrument(s, 101 + i));
+export const MOCK_ETFS: Instrument[] = ETF_SPECS.map((s, i) => specToInstrument(s, 201 + i));
+export const MOCK_CURRENCIES: Instrument[] = CURRENCY_SPECS.map((s, i) => specToInstrument(s, 301 + i));
+export const MOCK_INDICES: Instrument[] = INDEX_SPECS.map((s, i) => specToInstrument(s, 401 + i));
+export const MOCK_BONDS: Instrument[] = BOND_SPECS.map((s, i) => specToInstrument(s, 501 + i));
+export const MOCK_OPTIONS: Instrument[] = OPTION_SPECS.map((s, i) => specToInstrument(s, 601 + i));
+
+/** Полный каталог всех классов */
+export const MOCK_ALL_INSTRUMENTS: Instrument[] = [
+  ...MOCK_INSTRUMENTS, ...MOCK_SHARES, ...MOCK_ETFS, ...MOCK_CURRENCIES, ...MOCK_INDICES, ...MOCK_BONDS, ...MOCK_OPTIONS,
+];
+
+const specByUid = new Map(ALL_SPECS.map((s) => [specUid(s), s]));
 
 /** Текущие «живые» цены (мутируются тиком) */
-const livePrices = new Map<string, number>(MOCK_INSTRUMENTS.map((ins, i) => [ins.uid, MOCK_SPECS[i].basePrice]));
+const livePrices = new Map<string, number>(ALL_SPECS.map((s) => [specUid(s), s.basePrice]));
 
 /** Цены открытия сессии (для дельты за день) */
 const sessionOpen = new Map<string, number>(
-  MOCK_INSTRUMENTS.map((ins, i) => {
-    const rnd = seededRandom(hashCode(ins.ticker));
+  ALL_SPECS.map((s) => {
+    const rnd = seededRandom(hashCode(s.ticker + s.type));
     const drift = (rnd() - 0.45) * 0.012; // лёгкий сдвиг к базовой цене
-    return [ins.uid, MOCK_SPECS[i].basePrice * (1 - drift)];
+    return [specUid(s), s.basePrice * (1 - drift)];
   }),
 );
 
@@ -91,12 +182,129 @@ export function mockGetFutures(): Instrument[] {
   return MOCK_INSTRUMENTS;
 }
 
-/** Мок: поиск инструмента по строке */
+/** Мок: список акций */
+export function mockGetShares(): Instrument[] {
+  return MOCK_SHARES;
+}
+
+/** Мок: список ETF */
+export function mockGetEtfs(): Instrument[] {
+  return MOCK_ETFS;
+}
+
+/** Мок: список валютных пар */
+export function mockGetCurrencies(): Instrument[] {
+  return MOCK_CURRENCIES;
+}
+
+/** Мок: список облигаций */
+export function mockGetBonds(): Instrument[] {
+  return MOCK_BONDS;
+}
+
+/** Мок: список опционов (по базовому активу — фильтр по ticker базового актива, пусто → все) */
+export function mockGetOptionsBy(basicAssetUid?: string): Instrument[] {
+  if (!basicAssetUid) return MOCK_OPTIONS;
+  const base = MOCK_ALL_INSTRUMENTS.find((i) => i.uid === basicAssetUid);
+  if (!base) return MOCK_OPTIONS;
+  return MOCK_OPTIONS.filter((o) => o.basicAsset.toLowerCase() === base.ticker.toLowerCase());
+}
+
+/** Мок: индексы (tradable=false — только котировки) */
+export function mockGetIndices(): Instrument[] {
+  return MOCK_INDICES;
+}
+
+/** Мок: полный каталог всех классов */
+export function mockGetAllInstruments(): Instrument[] {
+  return MOCK_ALL_INSTRUMENTS;
+}
+
+/** Мок: поиск инструмента по строке (фьючерсы — legacy) */
 export function mockFindInstrument(query: string): Instrument[] {
   const q = query.toLowerCase();
   return MOCK_INSTRUMENTS.filter(
     (i) => i.ticker.toLowerCase().includes(q) || i.name.toLowerCase().includes(q),
   );
+}
+
+/** Мок: поиск по ВСЕМ классам сразу (аналог findInstrumentAll) */
+export function mockFindInstrumentAll(query: string): Instrument[] {
+  const q = query.toLowerCase();
+  return MOCK_ALL_INSTRUMENTS.filter(
+    (i) =>
+      i.ticker.toLowerCase().includes(q) ||
+      i.name.toLowerCase().includes(q) ||
+      (i.isin ?? '').toLowerCase().includes(q),
+  );
+}
+
+/** Мок: торговый статус инструмента (структура = TradingStatusInfo из services) */
+export function mockGetTradingStatus(uid: string): {
+  instrumentId: string;
+  tradingStatus: string;
+  limitOrderAvailable: boolean;
+  marketOrderAvailable: boolean;
+  bestpriceOrderAvailable: boolean;
+  onlyBestPrice: boolean;
+  tradingNow: boolean;
+} {
+  const ins = MOCK_ALL_INSTRUMENTS.find((i) => i.uid === uid);
+  const tradable = ins?.tradable ?? true;
+  return {
+    instrumentId: uid,
+    tradingStatus: tradable
+      ? 'SECURITY_TRADING_STATUS_NORMAL_TRADING'
+      : 'SECURITY_TRADING_STATUS_NOT_AVAILABLE_FOR_TRADING',
+    limitOrderAvailable: tradable,
+    marketOrderAvailable: tradable,
+    bestpriceOrderAvailable: tradable && (ins?.weekendFlag ?? false),
+    onlyBestPrice: false,
+    tradingNow: true,
+  };
+}
+
+/** Мок: маржинальные показатели счёта (структура = MarginAttributes из services) */
+export function mockGetMarginAttributes(): {
+  liquidPortfolio: number;
+  startingMargin: number;
+  minimalMargin: number;
+  fundsSufficiencyLevel: number;
+  amountOfMissingFunds: number;
+  correctedMargin: number;
+} {
+  return {
+    liquidPortfolio: 1_284_560.35,
+    startingMargin: 98_400,
+    minimalMargin: 49_200,
+    fundsSufficiencyLevel: 2.6,
+    amountOfMissingFunds: 0,
+    correctedMargin: 96_800,
+  };
+}
+
+/** Мок: расписание торгов MOEX на неделю вперёд (структура = TradingSchedule[] из services) */
+export function mockGetTradingSchedules(): Array<{
+  exchange: string;
+  days: Array<{ date: string; isTradingDay: boolean; startTime?: string; endTime?: string; eveningStartTime?: string; eveningEndTime?: string }>;
+}> {
+  const days = [];
+  const now = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now.getTime() + i * 86_400_000);
+    const dow = d.getUTCDay();
+    const isTradingDay = dow !== 0 && dow !== 6;
+    const date = d.toISOString().slice(0, 10);
+    days.push({
+      date: `${date}T00:00:00Z`,
+      isTradingDay,
+      startTime: isTradingDay ? `${date}T06:50:00Z` : undefined,
+      endTime: isTradingDay ? `${date}T18:39:59Z` : undefined,
+      eveningStartTime: isTradingDay ? `${date}T19:05:00Z` : undefined,
+      eveningEndTime: isTradingDay ? `${date}T20:49:59Z` : undefined,
+    });
+  }
+  return [{ exchange: 'MOEX', days }];
 }
 
 /** Мок: свечи-рандомволк с seed (детерминированы по uid+interval+count) */

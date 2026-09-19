@@ -1,7 +1,7 @@
 // Стор рыночных данных: выбранный инструмент, котировки, свечи, стакан
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Candle, Instrument, OrderBook, Quote } from '@/types/market';
+import type { Candle, Instrument, InstrumentType, OrderBook, Quote } from '@/types/market';
 
 export interface QuoteState {
   price: number;
@@ -23,9 +23,13 @@ export interface MarketState {
   candles: Record<string, Candle[]>;
   /** Стакан выбранного инструмента */
   orderBook: OrderBook | null;
+  /** Фильтр списка инструментов по классу ('all' — все классы) */
+  instrumentFilter: InstrumentType | 'all';
 
   setInstruments: (instruments: Instrument[]) => void;
   selectInstrument: (instrumentId: string) => void;
+  /** Установить фильтр класса инструментов */
+  setInstrumentFilter: (filter: InstrumentType | 'all') => void;
   /** Обновить котировки массивом Quote (delta сохраняется из ответа) */
   updateQuotes: (quotes: Quote[]) => void;
   /** Обновить одну котировку точечно */
@@ -42,6 +46,7 @@ export const useMarketStore = create<MarketState>()(
       quotes: {},
       candles: {},
       orderBook: null,
+      instrumentFilter: 'all' as const,
 
       setInstruments: (instruments) =>
         set((s) => ({
@@ -50,6 +55,8 @@ export const useMarketStore = create<MarketState>()(
         })),
 
       selectInstrument: (instrumentId) => set({ selectedInstrumentId: instrumentId }),
+
+      setInstrumentFilter: (filter) => set({ instrumentFilter: filter }),
 
       updateQuotes: (quotes) => {
         const prev = get().quotes;
@@ -86,8 +93,8 @@ export const useMarketStore = create<MarketState>()(
     }),
     {
       name: 'forts-pilot-market',
-      // persist только выбор инструмента и список — котировки/свечи всегда свежие
-      partialize: (s) => ({ selectedInstrumentId: s.selectedInstrumentId, instruments: s.instruments }),
+      // persist только выбор инструмента, фильтр и список — котировки/свечи всегда свежие
+      partialize: (s) => ({ selectedInstrumentId: s.selectedInstrumentId, instruments: s.instruments, instrumentFilter: s.instrumentFilter }),
     },
   ),
 );
