@@ -2,7 +2,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Account, AppMode, ConnectionStatus } from '@/types/account';
-import { callApi, maskToken, setLatencyListener } from '@/lib/tinvest/client';
+import { ApiError, callApi, maskToken, setLatencyListener, warmUpConnection } from '@/lib/tinvest/client';
+import { toast } from '@/components/connect/toast';
 
 interface RawAccount {
   id: string;
@@ -14,9 +15,9 @@ interface RawAccount {
 }
 
 export interface ConnectionState {
-  /** API-токен (persist) */
+  /** API-токен (persist, только если rememberMe) */
   token: string | null;
-  /** Выбранный счёт (persist) */
+  /** Выбранный счёт (persist, только если rememberMe) */
   accountId: string | null;
   /** Список счетов */
   accounts: Account[];
@@ -26,8 +27,16 @@ export interface ConnectionState {
   status: ConnectionStatus;
   /** Latency последнего запроса, мс */
   latencyMs: number | null;
+  /** Задержка последнего ping()-замера, мс */
+  lastLatencyMs: number | null;
+  /** Время последнего ping()-замера (timestamp) */
+  lastPingAt: number | null;
   /** Демо-режим без токена (mock-данные, persist) */
   demoMode: boolean;
+  /** «Запомнить на этом устройстве»: false — токен живёт только в памяти сессии, без persist */
+  rememberMe: boolean;
+  /** Идёт фоновое восстановление сессии (silent reconnect при загрузке) */
+  reconnecting: boolean;
 
   // Действия
   setToken: (token: string | null) => void;
@@ -37,8 +46,16 @@ export interface ConnectionState {
   setStatus: (status: ConnectionStatus) => void;
   setLatency: (latencyMs: number | null) => void;
   setDemoMode: (on: boolean) => void;
+  setRememberMe: (on: boolean) => void;
   /** Проверить соединение: GetAccounts; при успехе обновляет список счетов и статус */
   testConnection: () => Promise<boolean>;
+  /**
+   * Фоновое восстановление сессии при загрузке приложения: проверка токена без
+   * блокировки UI. При 401/403 — статус error + мягкий toast, токен НЕ стирается.
+   */
+  silentReconnect: () => Promise<void>;
+  /** Лёгкий замер задержки до API (GetAccounts). Возвращает мс или null при ошибке. */
+  ping: () => Promise<number | null>;
   /** Полный сброс подключения */
   disconnect: () => void;
 }
@@ -46,6 +63,34 @@ export interface ConnectionState {
 /** Маскированный токен для отображения */
 export function maskedToken(token: string | null): string {
   return token ? maskToken(token) : '';
+}
+
+/** Маска «t.••••последние4» для карточки сохранённого токена */
+export function savedTokenMask(token: string | null): string {
+  if (!token) return '';
+  return `t.••••${token.slice(-4)}`;
+}
+
+function mapAccounts(raw: RawAccount[] | undefined): Account[] {
+  return (raw ?? []).map((a) => ({
+    id: a.id,
+    name: a.name || `Счёт •…${a.id.slice(-4)}`,
+    type: a.type ?? '',
+    status: a.status ?? '',
+    openedDate: a.openedDate,
+    accessLevel: a.accessLevel,
+  }));
+}
+
+/** Прогрев после успешного подключения: TLS-сессия + параллельная предзагрузка каталогов */
+function scheduleWarmUp(): void {
+  warmUpConnection();
+  // Динамический импорт: разрываем цикл connection → services → connection
+  void import('@/components/connect/warmup')
+    .then((m) => m.warmUpMarketData())
+    .catch(() => {
+      /* прогрев — лучшее усилие, ошибки не критичны */
+    });
 }
 
 export const useConnectionStore = create<ConnectionState>()(
@@ -57,7 +102,11 @@ export const useConnectionStore = create<ConnectionState>()(
       mode: 'sandbox',
       status: 'offline',
       latencyMs: null,
+      lastLatencyMs: null,
+      lastPingAt: null,
       demoMode: false,
+      rememberMe: true,
+      reconnecting: false,
 
       setToken: (token) => set({ token, ...(token ? {} : { accountId: null, accounts: [], status: 'offline' as const }) }),
       setAccount: (accountId) => set({ accountId }),
@@ -66,6 +115,7 @@ export const useConnectionStore = create<ConnectionState>()(
       setStatus: (status) => set({ status }),
       setLatency: (latencyMs) => set({ latencyMs }),
       setDemoMode: (demoMode) => set({ demoMode }),
+      setRememberMe: (rememberMe) => set({ rememberMe }),
 
       testConnection: async () => {
         const { token, mode } = get();
@@ -79,14 +129,7 @@ export const useConnectionStore = create<ConnectionState>()(
             token,
             sandbox: mode === 'sandbox',
           });
-          const accounts: Account[] = (res.accounts ?? []).map((a) => ({
-            id: a.id,
-            name: a.name || `Счёт •…${a.id.slice(-4)}`,
-            type: a.type ?? '',
-            status: a.status ?? '',
-            openedDate: a.openedDate,
-            accessLevel: a.accessLevel,
-          }));
+          const accounts = mapAccounts(res.accounts);
           const { accountId } = get();
           set({
             accounts,
@@ -94,6 +137,7 @@ export const useConnectionStore = create<ConnectionState>()(
             // если выбранный счёт исчез — берём первый
             accountId: accounts.some((a) => a.id === accountId) ? accountId : (accounts[0]?.id ?? null),
           });
+          scheduleWarmUp();
           return true;
         } catch {
           set({ status: 'error' });
@@ -101,12 +145,80 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
+      silentReconnect: async () => {
+        const { token, mode, reconnecting } = get();
+        if (!token || reconnecting) return;
+        set({ reconnecting: true });
+        try {
+          const res = await callApi<{ accounts?: RawAccount[] }>('UsersService', 'GetAccounts', {}, {
+            token,
+            sandbox: mode === 'sandbox',
+            retries: 0,
+          });
+          const accounts = mapAccounts(res.accounts);
+          const { accountId } = get();
+          set({
+            accounts,
+            status: 'online',
+            accountId: accounts.some((a) => a.id === accountId) ? accountId : (accounts[0]?.id ?? null),
+          });
+          scheduleWarmUp();
+        } catch (e) {
+          set({ status: 'error' });
+          if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+            // Токен не стираем — пользователь сам решает на странице «Подключение»
+            toast('Сессия истекла — проверьте токен', {
+              details: 'Токен сохранён на устройстве: переподключитесь или смените его',
+              variant: 'warn',
+            });
+          }
+        } finally {
+          set({ reconnecting: false });
+        }
+      },
+
+      ping: async () => {
+        const { token, mode } = get();
+        if (!token) return null;
+        const started = performance.now();
+        try {
+          await callApi('UsersService', 'GetAccounts', {}, {
+            token,
+            sandbox: mode === 'sandbox',
+            timeoutMs: 5_000,
+            retries: 0,
+          });
+          const ms = Math.max(1, Math.round(performance.now() - started));
+          set({ lastLatencyMs: ms, lastPingAt: Date.now() });
+          return ms;
+        } catch {
+          set({ lastPingAt: Date.now() });
+          return null;
+        }
+      },
+
       disconnect: () =>
-        set({ token: null, accountId: null, accounts: [], status: 'offline', latencyMs: null, demoMode: false }),
+        set({
+          token: null,
+          accountId: null,
+          accounts: [],
+          status: 'offline',
+          latencyMs: null,
+          lastLatencyMs: null,
+          lastPingAt: null,
+          demoMode: false,
+        }),
     }),
     {
       name: 'forts-pilot-connection',
-      partialize: (s) => ({ token: s.token, accountId: s.accountId, mode: s.mode, demoMode: s.demoMode }),
+      // Токен и счёт персистятся только при rememberMe; иначе — только в памяти сессии
+      partialize: (s) => ({
+        token: s.rememberMe ? s.token : null,
+        accountId: s.rememberMe ? s.accountId : null,
+        mode: s.mode,
+        demoMode: s.demoMode,
+        rememberMe: s.rememberMe,
+      }),
     },
   ),
 );

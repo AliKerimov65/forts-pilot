@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ApiError } from '@/lib/tinvest/client';
+import { ApiError, warmUpConnection } from '@/lib/tinvest/client';
 import { getAccounts, openSandboxAccount, sandboxPayIn } from '@/lib/tinvest/services';
 import { useConnectionStore, maskedToken, selectIsConnected } from '@/store/connection';
 import type { AppMode } from '@/types/account';
@@ -34,12 +34,21 @@ import AccountPicker from '@/components/connect/AccountPicker';
 import ModeCards from '@/components/connect/ModeCards';
 import OfflineScreen from '@/components/connect/OfflineScreen';
 import PinSettings from '@/components/connect/PinSettings';
+import SavedTokenCard from '@/components/connect/SavedTokenCard';
 import TokenStep from '@/components/connect/TokenStep';
-import ToastHost from '@/components/connect/ToastHost';
 import { toast } from '@/components/connect/toast';
+import { warmUpMarketData } from '@/components/connect/warmup';
 import { formatTime } from '@/lib/format';
 
 const PAGE_TRANSITION = { duration: 0.22, ease: 'easeOut' as const };
+
+/** Качество соединения по задержке: <150 отлично, <400 норм, иначе медленно */
+export function latencyQuality(ms: number | null): string {
+  if (ms === null) return 'нет данных';
+  if (ms < 150) return 'отлично';
+  if (ms < 400) return 'норм';
+  return 'медленно';
+}
 
 /** Понятный текст ошибки API для пользователя */
 function apiErrorText(e: unknown): string {
@@ -99,6 +108,9 @@ function WizardView() {
       s.setStatus('online');
       s.setAccount(accs[0]?.id ?? null);
       setStep(2);
+      // Прогрев: TLS-сессия + параллельная предзагрузка каталогов (терминал откроется мгновенно)
+      warmUpConnection();
+      void warmUpMarketData();
       toast('Токен действителен', {
         details: accs.length > 0 ? `Найдено счетов: ${accs.length}` : 'Счета не найдены',
         variant: 'success',
@@ -413,6 +425,8 @@ function ConnectedView() {
   const mode = useConnectionStore((s) => s.mode);
   const status = useConnectionStore((s) => s.status);
   const latencyMs = useConnectionStore((s) => s.latencyMs);
+  const lastLatencyMs = useConnectionStore((s) => s.lastLatencyMs);
+  const lastPingAt = useConnectionStore((s) => s.lastPingAt);
   const demoMode = useConnectionStore((s) => s.demoMode);
 
   const [testing, setTesting] = useState(false);
@@ -441,6 +455,8 @@ function ConnectedView() {
   const isDemo = demoMode && !token;
   const currentAccount = accounts.find((a) => a.id === accountId);
   const online = status === 'online' || isDemo;
+  /** Эффективная задержка для отображения: свежий ping, иначе latency последнего запроса */
+  const effectiveLatency = lastLatencyMs ?? latencyMs;
 
   const retest = async () => {
     setTesting(true);
@@ -563,7 +579,7 @@ function ConnectedView() {
             <div className="mono mt-0.5 text-xs text-fg-secondary">
               <AnimatePresence mode="wait">
                 <motion.span
-                  key={latencyMs ?? 'none'}
+                  key={effectiveLatency ?? 'none'}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
@@ -571,7 +587,9 @@ function ConnectedView() {
                 >
                   {isDemo
                     ? 'API не используется · данные генерируются локально'
-                    : `задержка ${latencyMs !== null ? `${latencyMs}мс` : '—'} · поток котировок активен · сессия до 23:50`}
+                    : online
+                      ? `Соединение: ${effectiveLatency !== null ? `${effectiveLatency} мс · ${latencyQuality(effectiveLatency)}` : '—'} · поток котировок активен · сессия до 23:50`
+                      : `нет соединения${lastPingAt ? ` · последний замер в ${formatTime(lastPingAt)}` : ''}`}
                 </motion.span>
               </AnimatePresence>
             </div>
@@ -632,6 +650,20 @@ function ConnectedView() {
           </button>
         </div>
       </section>
+
+      {/* Токен сохранён, но соединение не активно (напр. сессия истекла): переподключить / сменить / удалить */}
+      {token && !online && (
+        <SavedTokenCard
+          busy={testing}
+          onReconnect={retest}
+          onChangeToken={() => {
+            // Переход к мастеру ввода нового токена (токен сбрасывается → WizardView)
+            useConnectionStore.getState().setToken(null);
+            toast('Введите новый токен', { details: 'Старый токен удалён из памяти сессии', variant: 'info' });
+          }}
+          onRemoveToken={() => setConfirmDisconnect(true)}
+        />
+      )}
 
       {/* Счета */}
       {token && (
@@ -814,7 +846,7 @@ export default function Connect() {
       transition={PAGE_TRANSITION}
       className="pb-6"
     >
-      <ToastHost />
+      {/* ToastHost вынесен в AppShell — тосты подключения глобальны */}
       {!online ? <OfflineScreen onRetry={retry} /> : connected ? <ConnectedView /> : <WizardView />}
     </motion.div>
   );

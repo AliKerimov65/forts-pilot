@@ -31,6 +31,7 @@ import { useTradingStore } from '@/store/trading';
 import { useRiskStore } from '@/store/risk';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
 import NavBadge from '@/components/NavBadge';
+import ToastHost from '@/components/connect/ToastHost';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -224,6 +225,29 @@ function ConnectionInline() {
       <span className={cn('h-2 w-2 shrink-0 rounded-full', dotClass)} />
       <span className="mono truncate text-[11px] text-fg-secondary">{text}</span>
     </>
+  );
+}
+
+/** Компактный чип задержки API: цвет по порогам (<150 зелёный, <400 жёлтый, иначе красный) */
+function ApiLatencyChip() {
+  const token = useConnectionStore((s) => s.token);
+  const status = useConnectionStore((s) => s.status);
+  const lastLatencyMs = useConnectionStore((s) => s.lastLatencyMs);
+  const latencyMs = useConnectionStore((s) => s.latencyMs);
+  if (!token || status !== 'online') return null;
+  const ms = lastLatencyMs ?? latencyMs;
+  const level = ms === null ? 'muted' : ms < 150 ? 'ok' : ms < 400 ? 'warn' : 'bad';
+  const dotClass = level === 'ok' ? 'bg-long' : level === 'warn' ? 'bg-warn' : level === 'bad' ? 'bg-short' : 'bg-fg-muted';
+  const textClass =
+    level === 'ok' ? 'text-long' : level === 'warn' ? 'text-warn' : level === 'bad' ? 'text-short' : 'text-fg-muted';
+  return (
+    <span
+      className="flex h-8 flex-none items-center gap-1.5 rounded-full border border-subtle bg-inset px-2.5"
+      title="Задержка до T-Invest API · обновление каждые 30 с"
+    >
+      <span className={cn('h-1.5 w-1.5 rounded-full', dotClass)} aria-hidden />
+      <span className={cn('mono text-[11px] font-semibold', textClass)}>API · {ms !== null ? `${ms} мс` : '—'}</span>
+    </span>
   );
 }
 
@@ -535,6 +559,23 @@ export default function AppShell() {
   useGoShortcuts(showGoHint);
   useEffect(() => () => window.clearTimeout(goHintTimer.current), []);
 
+  // Silent-reconnect при загрузке: сохранённый токен проверяется в фоне, без блокировки UI.
+  // При 401 токен НЕ стирается — пользователь решает на странице «Подключение».
+  useEffect(() => {
+    const s = useConnectionStore.getState();
+    if (s.token && s.status !== 'online') void s.silentReconnect();
+  }, []);
+
+  // Мониторинг задержки API: ping каждые 30 с, пока подключены (интервал с cleanup, без утечек)
+  useEffect(() => {
+    if (!connected) return;
+    const id = window.setInterval(() => {
+      const s = useConnectionStore.getState();
+      if (s.token && s.status === 'online') void s.ping();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [connected]);
+
   /** Пункт навигации sidebar (NavItem v2, v2-shell §2.4): 40px, бейджи, tooltip в collapsed/disabled */
   const renderItem = (item: NavItem) => {
     const disabled = isDisabled(item.to);
@@ -705,6 +746,7 @@ export default function AppShell() {
           <AccountSelector />
           <span className="mx-1 h-5 w-px bg-subtle" aria-hidden />
           <ModeToggle />
+          <ApiLatencyChip />
           <ConnectionDot withLabel />
           <BellButton />
         </div>
@@ -878,6 +920,9 @@ export default function AppShell() {
           <div className="mono mt-6 text-center text-[10px] text-fg-muted">FORTS PILOT v2.0</div>
         </SheetContent>
       </Sheet>
+
+      {/* Тосты подключения — глобально (в т.ч. «Сессия истекла» при silent-reconnect на любой странице) */}
+      <ToastHost />
 
       {/* Модалка шорткатов + тост-подсказка «G» (desktop) */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

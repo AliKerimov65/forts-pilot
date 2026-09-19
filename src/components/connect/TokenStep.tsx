@@ -8,6 +8,7 @@ import { AlertCircle, Check, CheckCircle2, ClipboardPaste, ExternalLink, Eye, Ey
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from '@/components/connect/toast';
+import { useConnectionStore } from '@/store/connection';
 
 const TOKEN_RE = /^t\.[A-Za-z0-9_-]{10,}$/;
 
@@ -30,6 +31,8 @@ export default function TokenStep({ verify }: TokenStepProps) {
   const [formatOk, setFormatOk] = useState<boolean | null>(null); // null — поле пустое
   const [error, setError] = useState('');
   const [shakeNonce, setShakeNonce] = useState(0);
+  // «Запомнить на этом устройстве»: по умолчанию включён (persist), выключен — токен только в памяти сессии
+  const [remember, setRemember] = useState(() => useConnectionStore.getState().rememberMe);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Живая валидация формата с debounce 300ms (в обработчике ввода)
@@ -73,6 +76,8 @@ export default function TokenStep({ verify }: TokenStepProps) {
     }
     setChecking(true);
     setError('');
+    // Флаг фиксируем до проверки: при успехе токен сохранится по нему (persist или только сессия)
+    useConnectionStore.getState().setRememberMe(remember);
     const err = await verify(t);
     setChecking(false);
     if (err) {
@@ -164,6 +169,32 @@ export default function TokenStep({ verify }: TokenStepProps) {
           </motion.p>
         ) : null}
       </AnimatePresence>
+
+      {/* Запоминание токена: включено — persist в localStorage, выключено — только память сессии */}
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={remember}
+        onClick={() => setRemember((v) => !v)}
+        className="flex w-full items-center gap-2.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-panel-raised"
+      >
+        <span
+          className={cn(
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors duration-[120ms]',
+            remember ? 'border-yellow bg-yellow-glow' : 'border-subtle bg-inset',
+          )}
+        >
+          {remember && <Check className="h-3.5 w-3.5 text-yellow" strokeWidth={3} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-semibold text-fg">Запомнить на этом устройстве</span>
+          <span className="block text-[11px] leading-4 text-fg-muted">
+            {remember
+              ? 'Токен сохранится локально в браузере — не нужно вводить повторно'
+              : 'Токен действует только до закрытия вкладки, никуда не записывается'}
+          </span>
+        </span>
+      </button>
 
       {/* Инструкция */}
       <Accordion type="single" collapsible>

@@ -106,6 +106,8 @@ export async function callApi<TResponse = unknown>(
       const response = await fetch(url, {
         method: 'POST',
         signal: controller.signal,
+        // keepalive: запрос завершится даже при выгрузке страницы (PWA-фон)
+        keepalive: true,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${opts.token}`,
@@ -157,6 +159,20 @@ export async function callApi<TResponse = unknown>(
     }
   }
   throw lastError;
+}
+
+/**
+ * Прогрев соединения с API-хостами: лёгкий no-cors запрос устанавливает
+ * TLS/HTTP2-сессию заранее, чтобы первый боевой вызов не платил за handshake.
+ * Ошибки игнорируются — это чисто оптимизация.
+ */
+export function warmUpConnection(): void {
+  for (const base of [BASE_PROD, BASE_SANDBOX]) {
+    // origin без /rest — достаточно для установки TLS-сессии к хосту
+    fetch(new URL(base).origin, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', keepalive: true }).catch(
+      () => {},
+    );
+  }
 }
 
 /** Генерация UUID v4 для orderId (идемпотентность, бриф §10.4) */
