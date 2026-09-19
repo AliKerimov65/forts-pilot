@@ -1,8 +1,9 @@
-/* FORTS PILOT — Service Worker (design.md §8)
- * network-first для API Т-Инвестиций, cache-first для статики, офлайн-фолбэк на index.html */
-
-const CACHE_STATIC = 'forts-pilot-static-v2';
-const CACHE_RUNTIME = 'forts-pilot-runtime-v2';
+/* FORTS PILOT — Service Worker v3
+ * network-first для навигации и API; cache-first только для хешированных ассетов.
+ * ВАЖНО: SW_VERSION меняется каждый релиз — это триггерит установку нового SW. */
+const SW_VERSION = 'v5.1.1-20260919';
+const CACHE_STATIC = `forts-pilot-static-${SW_VERSION}`;
+const CACHE_RUNTIME = `forts-pilot-runtime-${SW_VERSION}`;
 
 const API_HOSTS = [
   'invest-public-api.tbank.ru',
@@ -11,19 +12,14 @@ const API_HOSTS = [
   'sandbox-invest-public-api.tinkoff.ru',
 ];
 
-const PRECACHE = [
-  './',
-  './index.html',
-  './manifest.webmanifest',
-  './logo.svg',
-  './offline.svg',
-];
+/* index.html НЕ precache'им: он всегда network-first,
+   иначе старый shell навсегда блокирует обновления */
+const PRECACHE = ['./manifest.webmanifest', './logo.svg', './offline.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE_STATIC)
-      // по одному: отсутствие одного файла не должно валить всю установку
       .then((cache) => Promise.allSettled(PRECACHE.map((p) => cache.add(p))))
       .then(() => self.skipWaiting()),
   );
@@ -34,10 +30,18 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_STATIC && k !== CACHE_RUNTIME).map((k) => caches.delete(k))),
+        Promise.all(
+          keys
+            .filter((k) => k.startsWith('forts-pilot-') && k !== CACHE_STATIC && k !== CACHE_RUNTIME)
+            .map((k) => caches.delete(k)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 function isApi(url) {
@@ -53,18 +57,30 @@ function isStaticAsset(url) {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  if (request.method !== 'GET') return; // API-запросы POST — напрямую в сеть
+  if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // API: network-first (не кешируем котировки — только живые данные)
+  // API: только сеть (котировки не кешируем)
   if (isApi(url)) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // Навигация (SPA): network-first с обходом HTTP-кеша; свежий index.html — в runtime-кеш для офлайна
+  if (request.mode === 'navigate' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('/')) {
     event.respondWith(
-      fetch(request).catch(() => caches.match(request)),
+      fetch(new Request(request, { cache: 'no-cache' }))
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_RUNTIME).then((cache) => cache.put('./index.html', clone));
+          return response;
+        })
+        .catch(() => caches.match('./index.html')),
     );
     return;
   }
 
-  // Статика: cache-first
+  // Хешированные ассеты и шрифты: cache-first (имя файла = версия, протухания нет)
   if (isStaticAsset(url) || url.hostname === 'fonts.gstatic.com' || url.hostname === 'fonts.googleapis.com') {
     event.respondWith(
       caches.match(request).then(
@@ -78,20 +94,6 @@ self.addEventListener('fetch', (event) => {
             return response;
           }),
       ),
-    );
-    return;
-  }
-
-  // Навигация (SPA): network-first, офлайн — закешированный index.html
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_RUNTIME).then((cache) => cache.put('./index.html', clone));
-          return response;
-        })
-        .catch(() => caches.match('./index.html')),
     );
   }
 });
