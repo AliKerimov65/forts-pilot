@@ -221,7 +221,7 @@ export default function Robots() {
           image="/empty-robots.svg"
           imageAlt="Нет роботов"
           title="У вас пока нет роботов"
-          subtitle="Создайте первого робота из шаблона — grid для боковика или сигнальный для тренда."
+          subtitle="Создайте первого робота из шаблона — grid для боковика, сигнальный для тренда или регламент MOEX для торговли внутри дня."
           className="rounded-xl border border-dashed border-subtle py-12"
         />
       ) : (
@@ -263,9 +263,10 @@ export default function Robots() {
       {/* ===== Шаблоны стратегий ===== */}
       <section className={cn(showTemplates ? 'block' : 'hidden', 'md:block')}>
         <SectionTitle title="Шаблоны стратегий" />
-        <div className="grid gap-4 md:grid-cols-2 lg:gap-5">
+        <div className="grid gap-4 md:grid-cols-2 lg:gap-5 xl:grid-cols-3">
           <TemplateCard strategy="grid" index={0} onUse={(s) => openWizard(s)} />
           <TemplateCard strategy="signal" index={1} onUse={(s) => openWizard(s)} />
+          <TemplateCard strategy="regime" index={2} onUse={(s) => openWizard(s)} />
         </div>
       </section>
 

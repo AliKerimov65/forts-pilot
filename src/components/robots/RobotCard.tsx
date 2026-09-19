@@ -28,10 +28,12 @@ import { useRobotsStore } from '@/store/robots';
 import { useRiskStore } from '@/store/risk';
 import { useTradingStore } from '@/store/trading';
 import { getRobotExposure } from '@/lib/robots/engine';
-import { getExtConfig, useRobotsExtStore } from '@/lib/robots/config';
+import { defaultRegimeExt, getExtConfig, useRobotsExtStore } from '@/lib/robots/config';
 import RobotMiniChart from './RobotMiniChart';
 import ConfirmModal from './ConfirmModal';
 import RobotStatsModal from './RobotStatsModal';
+import { RegimeSessionTimeline, RegimeStatusPanel } from './RegimeStatus';
+import { useRegimeStatus } from './utils';
 import { ToggleSwitch } from './controls';
 
 function formatUptime(fromMs?: number): string {
@@ -77,6 +79,8 @@ export default function RobotCard({
   );
   // Синтетический P&L-спарклайн робота за 30д (детерминированный по id)
   const pnlSpark = useMemo(() => synthPnlSeries(robot.id, robot.stats.totalPnl, 30), [robot.id, robot.stats.totalPnl]);
+  // Снапшот регламент-движка для секции «Регламент сессии» (поллинг 3с у активных)
+  const regimeSnap = useRegimeStatus(robot.id, robot.strategy === 'regime' && running);
 
   const directionLabel =
     robot.strategy === 'signal'
@@ -140,9 +144,20 @@ export default function RobotCard({
         <div className="flex items-center gap-2 px-4 pt-4">
           <RobotStatusDot status={robot.status} />
           <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-fg">{robot.name}</h3>
-          <Badge variant={robot.strategy === 'grid' ? 'accent' : 'info'}>
-            {robot.strategy === 'grid' ? 'GRID' : 'СИГНАЛ'}
-          </Badge>
+          {robot.strategy === 'regime' ? (
+            <>
+              <Badge variant="accent">РЕГЛАМЕНТ</Badge>
+              {ext.regime?.hedgeEnabled && (
+                <Badge variant="info" size="compact">
+                  ХЕДЖ
+                </Badge>
+              )}
+            </>
+          ) : (
+            <Badge variant={robot.strategy === 'grid' ? 'accent' : 'info'}>
+              {robot.strategy === 'grid' ? 'GRID' : 'СИГНАЛ'}
+            </Badge>
+          )}
           {instrumentType && (
             <Badge variant="neutral" size="compact" className="shrink-0">
               {instrumentTypeLabel(instrumentType)}
@@ -183,6 +198,9 @@ export default function RobotCard({
           </div>
         </div>
 
+        {/* Статус регламента: фаза, отсчёт до события, ноги, маржа */}
+        {robot.strategy === 'regime' && <RegimeStatusPanel robotId={robot.id} running={running} />}
+
         {/* Мини-визуал (v2 §5.3.3: у приглушённых — grayscale 20%) */}
         <div
           className={cn(
@@ -198,6 +216,12 @@ export default function RobotCard({
       {/* Inline-детали (accordion) */}
       {expanded && (
         <div className="mt-3 space-y-3 border-t border-subtle bg-inset/70 px-4 py-3">
+          {robot.strategy === 'regime' && (
+            <div>
+              <div className="mb-2 text-[11px] uppercase tracking-[0.08em] text-fg-muted">Регламент сессии</div>
+              <RegimeSessionTimeline snap={regimeSnap} config={ext.regime ?? defaultRegimeExt()} running={running} />
+            </div>
+          )}
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-[0.08em] text-fg-muted">P&L робота за 30д</div>
             <Sparkline data={pnlSpark} width={240} height={40} positive={robot.stats.totalPnl >= 0} />

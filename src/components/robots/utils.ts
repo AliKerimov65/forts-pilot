@@ -1,5 +1,40 @@
 // Демо-генераторы для визуалов роботов (детерминированные, чистые — вне компонентов).
+import { useEffect, useState } from 'react';
 import { seededRandom } from '@/lib/tinvest/mock';
+import { getRegimeStatus } from '@/lib/robots/engine';
+import type { RegimeConfig } from '@/lib/robots/config';
+import type { RegimeStatusSnapshot } from '@/lib/robots/regime';
+
+/** Валидация конфига regime — список ошибок (пустой = конфиг валиден) */
+export function validateRegimeConfig(c: RegimeConfig): string[] {
+  const errors: string[] = [];
+  if (c.flatBeforeCloseMinMin >= c.flatBeforeCloseMaxMin) {
+    errors.push('Окно флэта: нижняя граница должна быть меньше верхней');
+  }
+  if (!(c.marginWarn < c.marginReduce && c.marginReduce < c.marginEmergency)) {
+    errors.push('Пороги маржи должны возрастать: предупреждение < сокращение < авария');
+  }
+  if (c.lots < 1) {
+    errors.push('Базовая нога — минимум 1 лот');
+  }
+  if (c.lots > c.maxPositionLots) {
+    errors.push('Базовая нога не может превышать макс. позицию');
+  }
+  return errors;
+}
+
+/** Снапшот regime-робота из движка; enabled → поллинг раз в 3с, иначе разовое чтение */
+export function useRegimeStatus(robotId: string, enabled: boolean): RegimeStatusSnapshot | null {
+  const [snap, setSnap] = useState<RegimeStatusSnapshot | null>(() => getRegimeStatus(robotId) ?? null);
+  useEffect(() => {
+    const read = () => setSnap(getRegimeStatus(robotId) ?? null);
+    read();
+    if (!enabled) return;
+    const t = setInterval(read, 3000);
+    return () => clearInterval(t);
+  }, [robotId, enabled]);
+  return snap;
+}
 
 function seedOf(key: string): number {
   return [...key].reduce((a, c) => a + c.charCodeAt(0), 0);

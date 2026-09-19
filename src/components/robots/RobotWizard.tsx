@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, ArrowLeft, ArrowRight, Grid3x3, TriangleAlert, X } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, Grid3x3, Scale, TriangleAlert, X } from 'lucide-react';
 import type { Instrument } from '@/types/market';
 import type { Robot, RobotParams, RobotStrategy } from '@/types/robot';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
@@ -19,15 +19,18 @@ import { useTradingStore } from '@/store/trading';
 import { useConnectionStore } from '@/store/connection';
 import {
   defaultProtection,
+  defaultRegimeExt,
   defaultSignalExt,
   getExtConfig,
   useRobotsExtStore,
+  type RegimeConfig,
   type RobotExtConfig,
 } from '@/lib/robots/config';
 import { TIMEFRAMES, type SignalTimeframe } from '@/lib/robots/signal';
 import InstrumentPicker from './InstrumentPicker';
 import GridPreview from './GridPreview';
-import { confettiPieces } from './utils';
+import RegimeParamsPanel from './RegimeParamsPanel';
+import { confettiPieces, validateRegimeConfig } from './utils';
 import { NumberField, SegmentedControl, Stepper, ToggleSwitch } from './controls';
 
 const STEPS = ['Стратегия', 'Параметры', 'Защита и запуск'] as const;
@@ -87,6 +90,9 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   const [direction, setDirection] = useState<'long' | 'short' | 'both'>('both');
   const [signalLots, setSignalLots] = useState(1);
   const [maxPosition, setMaxPosition] = useState(sigDefaults.maxPositionLots);
+
+  // Шаг 2 — regime («Регламент MOEX · Hedge»): полный конфиг одним объектом
+  const [regime, setRegime] = useState<RegimeConfig>(defaultRegimeExt());
 
   // Шаг 3
   const protDefaults = defaultProtection();
@@ -149,6 +155,9 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
         setDirection(se.direction);
         setMaxPosition(se.maxPositionLots);
       }
+      if (editRobot.strategy === 'regime') {
+        setRegime({ ...defaultRegimeExt(), ...(ext.regime ?? {}) });
+      }
       setDailyLossLimit(ext.protection.dailyLossLimit);
       setMaxTrades(ext.protection.maxTradesPerDay);
       setLossStreak(ext.protection.stopAfterLossStreak);
@@ -164,6 +173,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
       setSlOn(true);
       setTpOn(true);
       setDirection('both');
+      setRegime(defaultRegimeExt());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editRobot, initialStrategy]);
@@ -201,7 +211,9 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   const totalMargin =
     strategy === 'grid'
       ? marginPerLot * lotsPerLevel * levels
-      : marginPerLot * Math.min(signalLots, maxPosition);
+      : strategy === 'regime'
+        ? marginPerLot * regime.maxPositionLots
+        : marginPerLot * Math.min(signalLots, maxPosition);
   const freeMargin = portfolio?.freeMargin ?? 250_000; // демо-фолбэк
   const marginOk = totalMargin <= freeMargin;
 
@@ -212,46 +224,59 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   const canStep2 =
     strategy === 'grid'
       ? upperBound > lowerBound && lowerBound > 0 && levels >= 3 && lotsPerLevel >= 1 && marginOk
-      : signalLots >= 1 && slPts > 0;
+      : strategy === 'regime'
+        ? validateRegimeConfig(regime).length === 0 && marginOk
+        : signalLots >= 1 && slPts > 0;
 
   // ---------- сборка результата ----------
   const buildParams = (): RobotParams =>
     strategy === 'grid'
       ? { strategy: 'grid', grid: { upperBound, lowerBound, levels, lotsPerLevel } }
-      : {
-          strategy: 'signal',
-          signal: {
-            signalType,
-            timeframe,
-            lots: Math.min(signalLots, maxPosition),
-            stopLossPts: slOn ? slPts : undefined,
-            takeProfitPts: tpOn ? tpPts : undefined,
-          },
-        };
+      : strategy === 'regime'
+        ? {
+            strategy: 'regime',
+            regime: { lots: regime.lots, maxPositionLots: regime.maxPositionLots },
+            // обязательная оболочка совместимости (движок regime её не читает)
+            signal: { signalType: 'regime', timeframe: '5m', lots: regime.lots },
+          }
+        : {
+            strategy: 'signal',
+            signal: {
+              signalType,
+              timeframe,
+              lots: Math.min(signalLots, maxPosition),
+              stopLossPts: slOn ? slPts : undefined,
+              takeProfitPts: tpOn ? tpPts : undefined,
+            },
+          };
 
   const buildExt = (): RobotExtConfig => ({
     mode,
     protection: { dailyLossLimit, maxTradesPerDay: maxTrades, stopAfterLossStreak: lossStreak },
     ...(strategy === 'grid'
       ? { grid: { stepType, rebuild, stopLossPct: slOn ? slValue : 0, takeProfitPct: tpOn ? tpValue : 0 } }
-      : {
-          signal: {
-            emaFast,
-            emaSlow,
-            rsiPeriod,
-            rsiOversold,
-            rsiOverbought,
-            useRsiFilter,
-            // shortEnabled=false → принудительный long-only независимо от состояния UI
-            direction: instrument?.shortEnabled === false ? 'long' : direction,
-            maxPositionLots: maxPosition,
-          },
-        }),
+      : strategy === 'regime'
+        ? { regime }
+        : {
+            signal: {
+              emaFast,
+              emaSlow,
+              rsiPeriod,
+              rsiOversold,
+              rsiOverbought,
+              useRsiFilter,
+              // shortEnabled=false → принудительный long-only независимо от состояния UI
+              direction: instrument?.shortEnabled === false ? 'long' : direction,
+              maxPositionLots: maxPosition,
+            },
+          }),
   });
 
   const robotName = () =>
     name.trim() ||
-    `${instrument?.ticker ?? editRobot?.ticker ?? 'FORTS'} ${strategy === 'grid' ? 'Grid' : 'Signal'} ${robotsCount + 1}`;
+    `${instrument?.ticker ?? editRobot?.ticker ?? 'FORTS'} ${
+      strategy === 'grid' ? 'Grid' : strategy === 'regime' ? 'Регламент' : 'Signal'
+    } ${robotsCount + 1}`;
 
   const save = (launch: boolean) => {
     const params = buildParams();
@@ -464,6 +489,9 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                             setMaxPosition={setMaxPosition}
                           />
                         )}
+                        {step === 1 && strategy === 'regime' && (
+                          <StepRegime regime={regime} setRegime={setRegime} totalMargin={totalMargin} freeMargin={freeMargin} marginOk={marginOk} />
+                        )}
                         {step === 2 && (
                           <StepProtection
                             strategy={strategy}
@@ -571,12 +599,36 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   function buildSummary(): Array<[string, string]> {
     const rows: Array<[string, string]> = [
       ['Имя', robotName()],
-      ['Стратегия', strategy === 'grid' ? 'Grid (сетка)' : signalType === 'ema_cross' ? `EMA ${emaFast}/${emaSlow} cross` : 'RSI-разворот'],
+      [
+        'Стратегия',
+        strategy === 'grid'
+          ? 'Grid (сетка)'
+          : strategy === 'regime'
+            ? 'Регламент MOEX · Hedge'
+            : signalType === 'ema_cross'
+              ? `EMA ${emaFast}/${emaSlow} cross`
+              : 'RSI-разворот',
+      ],
       ['Инструмент', instrument?.ticker ?? editRobot?.ticker ?? '—'],
       ...(instrument ? ([['Класс', instrumentTypeLabel(instrument.type)]] as Array<[string, string]>) : []),
       ['Режим', mode === 'live' ? 'Боевой' : 'Песочница'],
     ];
-    if (strategy === 'grid') {
+    if (strategy === 'regime') {
+      rows.push(
+        [
+          'Режим дня',
+          `Вход за ${regime.entryOffsetMin} мин до открытия · Флэт за ${regime.flatBeforeCloseMinMin}–${regime.flatBeforeCloseMaxMin} мин до закрытия`,
+        ],
+        ['Хедж', regime.hedgeEnabled ? `${Math.round(regime.baseHedgeRatio * 100)}%` : 'выкл'],
+        [
+          'Стоп маржи',
+          `${Math.round(regime.marginReduce * 100)}/${Math.round(regime.marginEmergency * 100)}%`,
+        ],
+        ['Клиринг-детектор', `±${regime.clearingWatchMin} мин · z ≥ ${regime.jumpZThreshold}`],
+        ['TP / переоткрытие', `${regime.takeProfitPts} шагов · фиксация ${Math.round(regime.tpClosePct * 100)}%`],
+        ['Нога / макс. позиция', `${regime.lots} / ${regime.maxPositionLots} лот`],
+      );
+    } else if (strategy === 'grid') {
       rows.push(
         ['Границы', `${formatNumber(lowerBound, 2)} — ${formatNumber(upperBound, 2)}`],
         ['Уровней', String(levels)],
@@ -629,6 +681,12 @@ function StepStrategy(p: {
           [
             { v: 'grid' as const, icon: Grid3x3, title: 'Grid', text: 'Сетка уровней для боковика' },
             { v: 'signal' as const, icon: Activity, title: 'Сигнальный', text: 'EMA-cross + RSI-фильтр' },
+            {
+              v: 'regime' as const,
+              icon: Scale,
+              title: 'Регламент MOEX · Hedge',
+              text: 'Вход за 10 мин до открытия, флэт за 25–38 мин до закрытия, хедж-режим, защита от маржин-колла',
+            },
           ]
         ).map((opt) => (
           <button
@@ -979,6 +1037,54 @@ function StepSignal(p: {
   );
 }
 
+// ================= Шаг 2: Regime (Регламент MOEX · Hedge) =================
+
+function StepRegime({
+  regime,
+  setRegime,
+  totalMargin,
+  freeMargin,
+  marginOk,
+}: {
+  regime: RegimeConfig;
+  setRegime: (v: RegimeConfig) => void;
+  totalMargin: number;
+  freeMargin: number;
+  marginOk: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      <p className="text-xs leading-5 text-fg-secondary">
+        Внутридневная стратегия по расписанию Мосбиржи: премаркет-анализ, вход на открытии, виртуальный
+        хедж-неттинг, контроль клирингов и принудительный флэт перед закрытием дня.
+      </p>
+      <RegimeParamsPanel value={regime} onChange={setRegime} />
+      {/* Живой расчёт маржи (v2 §5.3.7: L0-inset карточка, выход за маржу — рамка border-short) */}
+      <div
+        className={cn(
+          'space-y-1 rounded-lg border p-3 text-[13px] shadow-inset',
+          marginOk ? 'border-subtle bg-inset' : 'border-short bg-short-dim',
+        )}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg-secondary">ГО при макс. позиции</span>
+          <span className={cn('mono font-bold', marginOk ? 'text-fg' : 'text-short')}>≈ {formatRub(totalMargin, 0)}</span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg-secondary">Свободная маржа</span>
+          <span className={cn('mono text-xs', marginOk ? 'text-fg-secondary' : 'text-short')}>{formatRub(freeMargin, 0)}</span>
+        </div>
+        {!marginOk && (
+          <div className="flex items-center gap-1 pt-0.5 text-xs font-medium text-short">
+            <TriangleAlert className="h-3 w-3" />
+            Позиция не помещается в свободную маржу — уменьшите лоты
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ================= Шаг 3: Защита =================
 
 function StepProtection(p: {
@@ -1008,9 +1114,16 @@ function StepProtection(p: {
   summary: Array<[string, string]>;
 }) {
   const isSignal = p.strategy === 'signal';
+  const isRegime = p.strategy === 'regime';
   return (
     <div className="space-y-5">
-      {/* SL/TP */}
+      {/* SL/TP (для regime выходы задаются регламентом на шаге параметров) */}
+      {isRegime ? (
+        <div className="rounded-xl border border-subtle bg-inset p-4 text-xs leading-5 text-fg-secondary">
+          Выходы управляются регламентом: тейк-профит, переоткрытие и принудительный флэт настраиваются
+          на шаге «Параметры». Защита от маржин-колла закрывает позицию при аварийной утилизации маржи.
+        </div>
+      ) : (
       <div className="space-y-3 rounded-xl border border-subtle bg-inset p-4">
         <div className="text-xs font-medium uppercase tracking-[0.08em] text-fg-secondary">Стоп-лосс / тейк-профит</div>
         <div className="flex items-center justify-between gap-3">
@@ -1044,6 +1157,7 @@ function StepProtection(p: {
           Риск на сделку: <span className="mono font-semibold text-warn">{formatRub(p.riskPerTrade, 0)}</span>
         </div>
       </div>
+      )}
 
       {/* Лимиты робота */}
       <div className="space-y-3">

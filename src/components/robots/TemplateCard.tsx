@@ -1,7 +1,7 @@
 // Карточки шаблонов стратегий (design.md robots §3): витрина с живым мини-визуалом
 // (SVG, точки сделок появляются последовательно, loop 3с) и кнопкой «Создать из шаблона».
 import { motion } from 'framer-motion';
-import { Grid3x3, Activity, ArrowRight } from 'lucide-react';
+import { Grid3x3, Activity, ArrowRight, Scale } from 'lucide-react';
 import type { RobotStrategy } from '@/types/robot';
 import { cn } from '@/lib/utils';
 
@@ -76,6 +76,44 @@ function SignalPreviewArt() {
   );
 }
 
+/** Шкала торгового дня: открытие → клиринг → флэт → закрытие (regime-витрина) */
+function RegimePreviewArt() {
+  // Метки по горизонтали: 09:00 открытие, 14:00 клиринг, окно флэта, 18:45 закрытие
+  const ticks = [
+    { x: 20, label: '09:00', color: 'var(--accent-yellow)' },
+    { x: 290, label: '14:00', color: 'var(--info)' },
+    { x: 540, label: '18:45', color: 'var(--text-muted)' },
+  ];
+  return (
+    <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="none" style={{ width: '100%', height: VH }}>
+      {/* ось дня */}
+      <line x1={20} y1={70} x2={540} y2={70} stroke="var(--border-strong)" strokeWidth={1.5} />
+      {/* окно принудительного флэта перед закрытием */}
+      <rect x={470} y={58} width={70} height={24} rx={5} fill="var(--short)" opacity={0.18} />
+      {ticks.map((t) => (
+        <g key={t.label}>
+          <line x1={t.x} y1={62} x2={t.x} y2={78} stroke={t.color} strokeWidth={2} />
+          <text x={t.x} y={96} fill="var(--text-muted)" fontSize={12} textAnchor="middle" fontFamily="JetBrains Mono, monospace">
+            {t.label}
+          </text>
+        </g>
+      ))}
+      {/* ноги хеджа: лонг/шорт-блоки в середине дня */}
+      <rect x={120} y={38} width={90} height={14} rx={4} fill="var(--long)" opacity={0.5} />
+      <rect x={220} y={38} width={45} height={14} rx={4} fill="var(--short)" opacity={0.5} />
+      {/* бегущая точка «сейчас» */}
+      <motion.circle
+        cy={70}
+        r={4}
+        fill="var(--accent-yellow)"
+        initial={{ cx: 20 }}
+        animate={{ cx: [20, 470, 20] }}
+        transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+      />
+    </svg>
+  );
+}
+
 const TEMPLATES: Array<{
   strategy: RobotStrategy;
   title: string;
@@ -101,6 +139,15 @@ const TEMPLATES: Array<{
     chips: ['Трендовый рынок', 'SL/TP обязательны', 'RSI-фильтр'],
     stats: 'Win-rate 62% · R:R 1:2,1',
     icon: Activity,
+  },
+  {
+    strategy: 'regime',
+    title: 'Регламент MOEX · Hedge',
+    description:
+      'Внутридневной робот по расписанию биржи: вход за 10 мин до открытия, флэт за 25–38 мин до закрытия, хедж-режим, защита от маржин-колла.',
+    chips: ['Внутри дня', 'Виртуальный хедж', 'Защита от маржин-колла'],
+    stats: 'Флэт к закрытию дня · Без переноса overnight',
+    icon: Scale,
   },
 ];
 
@@ -131,7 +178,7 @@ export default function TemplateCard({
       </div>
 
       <div className="mt-4 rounded-lg border border-subtle bg-inset p-2 transition-opacity duration-200 group-hover:opacity-100" style={{ opacity: 0.8 }}>
-        {strategy === 'grid' ? <GridPreviewArt /> : <SignalPreviewArt />}
+        {strategy === 'grid' ? <GridPreviewArt /> : strategy === 'regime' ? <RegimePreviewArt /> : <SignalPreviewArt />}
       </div>
 
       <p className="mt-3 text-sm leading-5 text-fg-secondary">{t.description}</p>
