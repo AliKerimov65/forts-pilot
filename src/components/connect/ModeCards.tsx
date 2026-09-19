@@ -33,15 +33,16 @@ export default function ModeCards({ value, onChange, disabled }: ModeCardsProps)
         disabled={disabled}
         onClick={() => onChange(mode)}
         whileTap={disabled ? undefined : { scale: 0.98 }}
-        animate={{ scale: selected ? 1.02 : 1 }}
         transition={{ duration: 0.2 }}
         className={cn(
-          'flex w-full flex-col gap-2 rounded-xl border bg-inset p-4 text-left transition-colors duration-200 disabled:opacity-50',
+          'flex w-full flex-col gap-2 rounded-xl bg-inset text-left transition-[border-color,box-shadow,background-color] duration-200 disabled:opacity-50',
           selected
-            ? isLive
-              ? 'border-yellow bg-yellow-glow'
-              : 'border-info bg-[rgba(59,130,246,0.10)]'
-            : 'border-subtle hover:border-strong',
+            ? cn(
+                // выбранная карточка: рамка 2px + shadow-raised (design-v2.md 5.7.4); p-[15px] компенсирует 2px рамку
+                'border-2 p-[15px] shadow-raised',
+                isLive ? 'border-yellow bg-yellow-glow' : 'border-info bg-[rgba(59,130,246,0.10)]',
+              )
+            : 'border border-subtle p-4 hover:border-strong hover:shadow-raised',
         )}
       >
         <span className="flex w-full items-center gap-2.5">
@@ -66,12 +67,8 @@ export default function ModeCards({ value, onChange, disabled }: ModeCardsProps)
         </span>
         <span className="text-sm leading-relaxed text-fg-secondary">{opts.description}</span>
         {opts.warning && (
-          <span
-            className={cn(
-              'flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium',
-              selected ? 'bg-yellow-glow text-yellow' : 'bg-panel-raised text-fg-muted',
-            )}
-          >
+          // Строка-предупреждение боевого режима: иконка AlertTriangle 14px + text-warn (design-v2.md 5.7.4)
+          <span className="flex items-center gap-1.5 rounded-md bg-[rgba(245,165,36,0.10)] px-2 py-1.5 text-xs font-medium text-warn">
             <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
             {opts.warning}
           </span>

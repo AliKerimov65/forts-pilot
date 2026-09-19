@@ -4,7 +4,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bell, Check, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
+import {
+  AlertCircle,
+  Bell,
+  Check,
+  History,
+  Loader2,
+  Percent,
+  Power,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  type LucideIcon,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { cancelOrder, getPortfolio } from '@/lib/tinvest/services';
 import { mockGetPortfolio } from '@/lib/tinvest/mock';
@@ -14,9 +26,11 @@ import type { RiskAutomations, RiskLimits } from '@/store/risk';
 import { useRobotsStore } from '@/store/robots';
 import { useTradingStore } from '@/store/trading';
 import { formatNumber, formatRub, formatTime, formatDateShort } from '@/lib/format';
+import AnchorChips from '@/components/AnchorChips';
 import Badge from '@/components/Badge';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
 import EmptyState from '@/components/EmptyState';
+import PageHeader from '@/components/PageHeader';
 import { Slider } from '@/components/ui/slider';
 import LimitRing from '@/components/risk/LimitRing';
 import NumberStepper from '@/components/risk/NumberStepper';
@@ -59,6 +73,15 @@ const KIND_META: Record<string, { label: string; variant: 'short' | 'info' | 'ac
   robots_limit: { label: 'Роботы', variant: 'info' },
 };
 
+/** Склонение «изменение/изменения/изменений» */
+function pluralChanges(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'изменение';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'изменения';
+  return 'изменений';
+}
+
 /** Цвет по заполненности лимита (зелёная <50%, жёлтая 50–80%, красная >80%) */
 function ringColorClass(ratio: number): string {
   if (ratio > 0.8) return 'text-short';
@@ -66,39 +89,56 @@ function ringColorClass(ratio: number): string {
   return 'text-long';
 }
 
-/** Панель-секция настроек */
+/** Панель-секция настроек v2: заголовок H3 + иконка 16px + caption-описание (design-v2.md 5.6.4) */
 function Section({
+  id,
   title,
+  icon: Icon,
+  desc,
   children,
   danger,
   flash,
+  raised,
   className,
 }: {
+  id?: string;
   title: string;
+  icon?: LucideIcon;
+  desc?: string;
   danger?: boolean;
   flash?: boolean;
+  /** L2-панель (raised + тень) — для аварийной остановки (design-v2.md 5.6.3) */
+  raised?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <motion.section
+      id={id}
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
       className={cn(
-        'rounded-xl border bg-panel p-4 transition-colors duration-500 sm:p-5',
-        danger ? 'border-short/60 bg-short-dim' : 'border-subtle',
+        'rounded-xl border p-4 transition-colors duration-500 sm:p-5',
+        raised ? 'bg-panel-raised shadow-raised' : 'bg-panel',
+        danger ? 'border-short/50' : 'border-subtle',
         flash && 'bg-short-dim border-short',
         className,
       )}
     >
-      <h2 className="mb-4 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">{title}</h2>
+      <div className="mb-4 flex items-center gap-2">
+        {Icon && (
+          <Icon className={cn('h-4 w-4 shrink-0', danger ? 'text-short' : 'text-fg-muted')} strokeWidth={2} />
+        )}
+        <h2 className="text-base font-semibold leading-[22px] text-fg">{title}</h2>
+        {desc && <p className="min-w-0 flex-1 truncate text-xs leading-4 text-fg-muted">{desc}</p>}
+      </div>
       {children}
     </motion.section>
   );
 }
 
-/** Строка настройки: метка + контрол; жёлтая кромка слева при несохранённом изменении */
+/** Строка настройки: метка + контрол; dirty-кромка — inset-тень 2px жёлтая (v2-components.md §5) */
 function Field({
   label,
   hint,
@@ -115,18 +155,23 @@ function Field({
   return (
     <div
       className={cn(
-        '-ml-2 border-l-2 pl-2 transition-colors duration-300',
-        changed ? 'border-yellow' : 'border-transparent',
+        '-ml-2 rounded-md pl-2 transition-shadow duration-300',
+        changed && 'shadow-[inset_2px_0_0_var(--accent-yellow)]',
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-medium text-fg">{label}</div>
-          {hint && <div className="mt-0.5 text-xs text-fg-secondary">{hint}</div>}
+          {hint && <div className="mt-0.5 text-xs leading-4 text-fg-muted">{hint}</div>}
         </div>
         {children}
       </div>
-      {error && <p className="mt-1.5 text-xs font-medium text-short">{error}</p>}
+      {error && (
+        <p className="mt-1.5 flex items-center gap-1 text-xs font-medium leading-4 text-short">
+          <AlertCircle className="h-3 w-3 shrink-0" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -155,6 +200,16 @@ export default function Risk() {
   const [screenFlash, setScreenFlash] = useState(false);
   const [notifs, setNotifs] = useState<NotifPrefs>(loadNotifs);
   const flashTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Тик для countdown активного ограничения в истории (design-v2.md 5.6.7)
+  const [now, setNow] = useState(() => Date.now());
+  // Прогресс мобильной карусели колец (полоса 2px, design-v2.md 5.6.8)
+  const [ringsProgress, setRingsProgress] = useState(0);
+  const ringsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => () => clearTimeout(flashTimer.current), []);
 
@@ -194,6 +249,11 @@ export default function Risk() {
   const dirty =
     JSON.stringify(draftLimits) !== JSON.stringify(limits) ||
     JSON.stringify(draftAuto) !== JSON.stringify(automations);
+
+  // Счётчик изменённых полей для sticky-панели («3 изменения», design-v2.md 5.6.6)
+  const changedCount =
+    (Object.keys(limits) as (keyof RiskLimits)[]).filter((k) => draftLimits[k] !== limits[k]).length +
+    (Object.keys(automations) as (keyof RiskAutomations)[]).filter((k) => draftAuto[k] !== automations[k]).length;
 
   // ---------- производные значения ----------
 
@@ -287,12 +347,35 @@ export default function Risk() {
         ? { text: 'Приближение к лимиту', cls: 'bg-yellow-glow text-warn' }
         : { text: 'Все лимиты в норме', cls: 'bg-long-dim text-long' };
 
+  const scrollToSection = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Countdown до конца дня для активного дневного стопа (история срабатываний)
+  const msToMidnight = useMemo(() => {
+    const end = new Date(now);
+    end.setHours(24, 0, 0, 0);
+    return Math.max(0, end.getTime() - now);
+  }, [now]);
+  const countdown = `${Math.floor(msToMidnight / 3_600_000)}ч ${Math.floor((msToMidnight % 3_600_000) / 60_000)}м`;
+  const todayStart = new Date(now).setHours(0, 0, 0, 0);
+
+  const pillNode = (
+    <span className={cn('inline-flex items-center rounded-full px-3 py-1.5 text-xs font-bold', pill.cls)}>
+      {dailyStopHit || emergencyActive ? (
+        <ShieldAlert className="mr-1.5 h-3.5 w-3.5" />
+      ) : (
+        <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+      )}
+      {pill.text}
+    </span>
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={PAGE_TRANSITION}
-      className="space-y-4 pb-28"
+      className="space-y-4 pb-28 lg:space-y-5"
     >
       <ToastHost />
 
@@ -309,50 +392,110 @@ export default function Risk() {
         )}
       </AnimatePresence>
 
-      {/* Шапка */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-[22px] font-extrabold leading-7 tracking-tight text-fg sm:text-[28px] sm:leading-[34px]">
-          Риск-менеджмент
-        </h1>
-        <span className={cn('ml-auto rounded-full px-3 py-1.5 text-xs font-bold', pill.cls)}>
-          {dailyStopHit || emergencyActive ? (
-            <ShieldAlert className="mr-1.5 inline h-3.5 w-3.5" />
-          ) : (
-            <ShieldCheck className="mr-1.5 inline h-3.5 w-3.5" />
-          )}
-          {pill.text}
-        </span>
-      </div>
+      {/* Шапка v2 (PageHeader, design-v2.md 5.6.1): пилюля статуса + «Не сохранено»/«Сохранить» */}
+      <PageHeader
+        group="Учёт и риски"
+        title="Риск-менеджмент"
+        subtitle={
+          <>
+            Убыток дня <span className="mono">−{formatNumber(dayLoss)} ₽</span>
+            {' · маржа '}
+            <span className="mono">{Math.round(currentMarginPct)}%</span>
+          </>
+        }
+        statusPill={<span className="hidden sm:inline-flex">{pillNode}</span>}
+        actions={
+          dirty ? (
+            <>
+              <span className="flex items-center gap-1.5 text-xs font-medium text-fg-secondary">
+                <span className="h-1.5 w-1.5 rounded-full bg-yellow" />
+                <span className="hidden md:inline">Не сохранено</span>
+              </span>
+              <button
+                type="button"
+                onClick={save}
+                disabled={!valid || saving}
+                className="flex h-8 items-center gap-1.5 rounded-[10px] bg-yellow px-3 text-[13px] font-bold text-app transition-shadow hover:glow-accent disabled:opacity-40"
+              >
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                Сохранить
+              </button>
+            </>
+          ) : undefined
+        }
+      />
+      {/* Пилюля статуса под заголовком на mobile (design-v2.md 5.6.1) */}
+      <div className="-mt-2 sm:hidden">{pillNode}</div>
 
-      {/* «Сегодня» — кольца лимитов */}
+      {/* Якоря-чипы секций (mobile, design-v2.md 5.6.8) */}
+      <AnchorChips
+        anchors={[
+          { id: 'risk-limits', label: 'Лимиты' },
+          { id: 'risk-margin', label: 'Маржа' },
+          { id: 'risk-emergency', label: 'Аварийная' },
+          { id: 'risk-automations', label: 'Автоматики' },
+          { id: 'risk-history', label: 'История' },
+        ]}
+      />
+
+      {/* «Сегодня» — кольца лимитов; клик по кольцу → скролл к секции (design-v2.md 5.6.2) */}
       <section className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">Сегодня</h2>
-        <div className="flex gap-4 overflow-x-auto pb-1 sm:justify-around sm:overflow-visible">
+        <div className="mb-4 flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 shrink-0 text-fg-muted" strokeWidth={2} />
+          <h2 className="text-base font-semibold leading-[22px] text-fg">Сегодня</h2>
+          <p className="min-w-0 flex-1 truncate text-xs leading-4 text-fg-muted">Использование лимитов за текущую сессию</p>
+        </div>
+        <div
+          ref={ringsRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const max = el.scrollWidth - el.clientWidth;
+            setRingsProgress(max > 0 ? el.scrollLeft / max : 0);
+          }}
+          className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-1 sm:snap-none sm:justify-around sm:overflow-visible"
+        >
           <LimitRing
             ratio={lossRatio}
             label="Убыток дня"
             value={`${formatNumber(dayLoss)} / ${formatNumber(limits.dailyStopRub)} ₽`}
+            caption={
+              limits.dailyStopRub > 0
+                ? `до стопа ${formatNumber(Math.max(0, limits.dailyStopRub - dayLoss))} ₽`
+                : 'стоп выключен'
+            }
             delay={0}
+            onClick={() => scrollToSection('risk-limits')}
           />
           <LimitRing
             ratio={marginRatio}
             label="Маржа"
             value={`${Math.round(currentMarginPct)}% / ${limits.maxMarginPct}%`}
+            caption={`ГО ${formatRub(portfolio?.blockedMargin ?? 0, 0)}`}
             delay={0.1}
+            onClick={() => scrollToSection('risk-margin')}
           />
           <LimitRing
             ratio={lotsRatio}
             label="Макс. позиция"
             value={`${maxLotsNow} / ${limits.maxPositionLots} лотов`}
+            caption={lotsRatio > 0 ? 'предел активен' : 'позиций нет'}
             delay={0.2}
+            onClick={() => scrollToSection('risk-limits')}
+          />
+        </div>
+        {/* Полоса-прогресс карусели (mobile, design-v2.md 5.6.8) */}
+        <div className="mt-3 h-0.5 w-full overflow-hidden rounded-full bg-panel-raised sm:hidden">
+          <div
+            className="h-full w-1/3 rounded-full bg-yellow transition-transform duration-150"
+            style={{ transform: `translateX(${ringsProgress * 200}%)` }}
           />
         </div>
       </section>
 
-      {/* Сетка настроек */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Лимиты */}
-        <Section title="Лимиты">
+      {/* Сетка настроек: порядок по критичности (design-v2.md 5.6.3) */}
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
+        {/* Лимиты убытка */}
+        <Section id="risk-limits" title="Лимиты убытка" icon={SlidersHorizontal} desc="Жёсткие пороги дня и позиции">
           <div className="space-y-5">
             <Field
               label="Дневной стоп, ₽"
@@ -371,7 +514,7 @@ export default function Risk() {
                     onChange={(e) =>
                       setDraftLimits((l) => ({ ...l, dailyStopRub: Math.round(Number(e.target.value) || 0) }))
                     }
-                    className="mono h-9 w-28 rounded-lg border border-subtle bg-inset px-2.5 text-sm text-fg outline-none focus:border-strong"
+                    className="mono h-10 w-28 rounded-lg border border-subtle bg-inset px-3 text-sm text-fg outline-none transition-colors duration-[120ms] placeholder:text-fg-muted hover:border-strong focus:border-strong focus:shadow-[0_0_0_3px_var(--focus-ring)]"
                     aria-label="Дневной стоп в рублях"
                   />
                   <span className={cn('mono text-xs font-semibold', ringColorClass(lossRatio))}>
@@ -424,8 +567,8 @@ export default function Risk() {
           </div>
         </Section>
 
-        {/* Маржа */}
-        <Section title="Маржа">
+        {/* Маржа и плечо */}
+        <Section id="risk-margin" title="Маржа и плечо" icon={Percent} desc="Порог загрузки депозита">
           <div className="space-y-5">
             <Field
               label="Лимит маржи, %"
@@ -434,7 +577,11 @@ export default function Risk() {
               error={errors.maxMarginPct}
             >
               <div className="w-full max-w-xs">
-                <div className="mono mb-2 text-sm font-bold text-fg">{draftLimits.maxMarginPct}%</div>
+                <div className="mb-2">
+                  <span className="mono inline-flex h-6 items-center rounded-md border border-subtle bg-panel-raised px-2 text-[13px] font-bold text-fg">
+                    {draftLimits.maxMarginPct}%
+                  </span>
+                </div>
                 <Slider
                   value={[draftLimits.maxMarginPct]}
                   min={10}
@@ -464,8 +611,23 @@ export default function Risk() {
           </div>
         </Section>
 
+        {/* Аварийная кнопка — L2 с short-рамкой (design-v2.md 5.6.3) */}
+        <Section
+          id="risk-emergency"
+          title="Аварийная остановка"
+          icon={Power}
+          desc="Стоп всех роботов и отмена ордеров одним действием"
+          danger
+          raised
+          className="lg:col-span-2"
+        >
+          <div className="flex justify-center py-2">
+            <EmergencyStop live={mode === 'live'} onActivate={emergencyActivate} />
+          </div>
+        </Section>
+
         {/* Защитные автоматики */}
-        <Section title="Защитные автоматики" flash={dangerFlash}>
+        <Section id="risk-automations" title="Защитные автоматики" icon={ShieldCheck} desc="Реакция системы на срабатывание лимитов" flash={dangerFlash}>
           <div className="space-y-4">
             <Field
               label="Стоп роботов при дневном лимите"
@@ -516,7 +678,7 @@ export default function Risk() {
         </Section>
 
         {/* Уведомления о рисках */}
-        <Section title="Уведомления о рисках">
+        <Section id="risk-notifications" title="Уведомления" icon={Bell} desc="Какие события присылать push и в ленту">
           <div className="space-y-4">
             {NOTIF_ROWS.map((row) => (
               <div key={row.key} className="flex items-center justify-between gap-3">
@@ -541,52 +703,87 @@ export default function Risk() {
           </div>
         </Section>
 
-        {/* Аварийная кнопка */}
-        <Section title="Аварийная остановка" danger className="lg:col-span-2">
-          <div className="flex justify-center py-2">
-            <EmergencyStop live={mode === 'live'} onActivate={emergencyActivate} />
-          </div>
-        </Section>
       </div>
 
-      {/* История срабатываний */}
-      <section className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">
-          История срабатываний
-        </h2>
-        {events.length === 0 ? (
-          <EmptyState
-            icon={<ShieldCheck className="h-7 w-7 text-long" />}
-            title="Срабатываний не было"
-            subtitle="Здесь появятся события защитных лимитов и аварийной остановки"
-          />
-        ) : (
-          <ul className="divide-y divide-subtle">
-            <AnimatePresence initial={false}>
-              {events.map((e) => {
-                const meta = KIND_META[e.kind] ?? { label: e.kind, variant: 'neutral' as const };
-                return (
-                  <motion.li
-                    key={e.id}
-                    initial={{ opacity: 0, y: -12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5"
-                  >
-                    <span className="mono shrink-0 text-xs text-fg-muted">
-                      {formatDateShort(e.time)} · {formatTime(e.time)}
-                    </span>
-                    <Badge variant={meta.variant}>{meta.label}</Badge>
-                    <span className="min-w-0 flex-1 text-sm text-fg-secondary">{e.text}</span>
-                  </motion.li>
-                );
-              })}
-            </AnimatePresence>
-          </ul>
-        )}
+      {/* История срабатываний — таблица по §2.3 (историческая → zebra, design-v2.md 5.6.7) */}
+      <section id="risk-history" className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <History className="h-4 w-4 shrink-0 text-fg-muted" strokeWidth={2} />
+          <h2 className="text-base font-semibold leading-[22px] text-fg">История срабатываний</h2>
+          {events.length > 0 && (
+            <span className="rounded-full bg-panel-raised px-2 py-0.5 mono text-[11px] font-semibold text-fg-secondary">
+              {events.length}
+            </span>
+          )}
+          <span className="h-px flex-1 bg-subtle" />
+        </div>
+        <div className="overflow-hidden rounded-xl border border-subtle">
+          <div className="max-h-[520px] overflow-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
+                <tr>
+                  <th className="h-9 px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">
+                    Дата и время
+                  </th>
+                  <th className="h-9 px-3 text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">
+                    Лимит
+                  </th>
+                  <th className="h-9 px-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">
+                    Событие
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.length === 0 ? (
+                  <tr>
+                    <td colSpan={3}>
+                      <EmptyState
+                        compact
+                        icon={<ShieldCheck className="h-6 w-6 text-long" strokeWidth={1.5} />}
+                        title="Срабатываний не было"
+                        subtitle="Здесь появятся события защитных лимитов и аварийной остановки"
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  events.map((e) => {
+                    const meta = KIND_META[e.kind] ?? { label: e.kind, variant: 'neutral' as const };
+                    const activeToday = e.kind === 'daily_stop' && dailyStopHit && e.time >= todayStart;
+                    return (
+                      <tr
+                        key={e.id}
+                        className={cn(
+                          'h-10 border-t border-subtle/60 transition-colors duration-[120ms] even:bg-white/[0.02] hover:bg-panel-raised',
+                          activeToday && 'bg-panel-raised shadow-[inset_2px_0_0_var(--short)]',
+                        )}
+                      >
+                        <td className="mono whitespace-nowrap px-3 text-left text-xs text-fg-muted">
+                          {formatDateShort(e.time)} · {formatTime(e.time)}
+                        </td>
+                        <td className="px-3 text-center">
+                          <Badge variant={meta.variant} size="compact">
+                            {meta.label}
+                          </Badge>
+                        </td>
+                        <td className="min-w-0 px-3 text-sm text-fg-secondary">
+                          <span className="block truncate">{e.text}</span>
+                          {activeToday && (
+                            <span className="mono block text-[11px] font-medium text-short">
+                              до 00:00 ({countdown})
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
-      {/* Sticky-панель сохранения */}
+      {/* Sticky-панель сохранения — L3, счётчик изменений (design-v2.md 5.6.6) */}
       <AnimatePresence>
         {dirty && (
           <motion.div
@@ -594,16 +791,22 @@ export default function Risk() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 96, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-            className="fixed inset-x-3 bottom-20 z-40 mx-auto flex max-w-lg items-center gap-3 rounded-xl border border-subtle bg-panel-raised p-3 shadow-xl shadow-black/40 lg:bottom-6"
+            className="fixed inset-x-3 bottom-[84px] z-40 mx-auto flex max-w-lg items-center gap-3 rounded-xl border border-strong bg-overlay p-3 shadow-overlay lg:bottom-4"
           >
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
-              Есть несохранённые изменения
+              <span className="mono mr-1.5 inline-flex h-[18px] items-center rounded-full bg-yellow-glow px-2 text-[11px] font-semibold text-yellow">
+                {changedCount}
+              </span>
+              {pluralChanges(changedCount)} — не сохранено
             </span>
             <button
               type="button"
-              onClick={reset}
+              onClick={() => {
+                reset();
+                toast('Изменения отменены', { variant: 'info' });
+              }}
               disabled={saving}
-              className="h-10 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:bg-panel disabled:opacity-50"
+              className="h-10 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:bg-panel-raised hover:text-fg disabled:opacity-50"
             >
               Сбросить
             </button>
