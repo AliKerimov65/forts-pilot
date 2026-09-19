@@ -9,9 +9,21 @@ import type { Position } from '@/types/trading';
 import Badge from '@/components/Badge';
 import PriceTicker from '@/components/PriceTicker';
 import EmptyState from '@/components/EmptyState';
-import { formatNumber, formatRub, formatSignedRub } from '@/lib/format';
-import { effectiveSlTp, pnlPct, positionSource, useSlTpStore } from './monitorData';
+import { formatRub, formatSignedRub } from '@/lib/format';
+import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
+import { effectiveSlTp, formatPositionPrice, isBondPosition, pnlPct, positionInstrument, positionSource, useSlTpStore } from './monitorData';
 import SwipeActionRow from './SwipeActionRow';
+
+/** Бейдж класса инструмента позиции (Акция/Фьючерс/ETF/Валюта/Облигация…) */
+function ClassBadge({ p }: { p: Position }) {
+  const meta = positionInstrument(p);
+  if (!meta) return null;
+  return (
+    <Badge variant="neutral" size="compact">
+      {instrumentTypeLabel(meta.type)}
+    </Badge>
+  );
+}
 
 function SourceBadge({ p }: { p: Position }) {
   const src = positionSource(p);
@@ -48,7 +60,7 @@ function SlTpCell({ p, kind }: { p: Position; kind: 'sl' | 'tp' }) {
   return (
     <span className={cn('mono inline-flex items-center gap-1 text-[13px]', kind === 'sl' ? 'text-short' : 'text-long')}>
       {kind === 'sl' && <Shield className="h-3 w-3" />}
-      {formatNumber(v)}
+      {formatPositionPrice(p, v)}
     </span>
   );
 }
@@ -76,9 +88,9 @@ function PositionScale({ p }: { p: Position }) {
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
       />
       <div className="mono absolute bottom-1 left-2 right-2 flex justify-between text-[10px] text-fg-muted">
-        <span className="text-short">SL {formatNumber(sl)}</span>
-        <span>вход {formatNumber(p.avgPrice)}</span>
-        <span className="text-long">TP {formatNumber(tp)}</span>
+        <span className="text-short">SL {formatPositionPrice(p, sl)}</span>
+        <span>вход {formatPositionPrice(p, p.avgPrice)}</span>
+        <span className="text-long">TP {formatPositionPrice(p, tp)}</span>
       </div>
     </div>
   );
@@ -204,6 +216,9 @@ export default function PositionsTable(props: PositionsTableProps) {
         <h3 className="text-sm font-semibold text-fg">
           Открытые позиции <span className="mono text-fg-muted">({positions.length})</span>
         </h3>
+        {positions.some(isBondPosition) && (
+          <span className="text-[11px] text-fg-muted">Цены облигаций — в % от номинала</span>
+        )}
       </div>
 
       {/* ===== Mobile: карточки ===== */}
@@ -238,18 +253,22 @@ export default function PositionsTable(props: PositionsTableProps) {
                       <Badge variant={p.direction === 'long' ? 'long' : 'short'}>
                         {p.direction === 'long' ? 'Лонг' : 'Шорт'}
                       </Badge>
+                      <ClassBadge p={p} />
                       <span className="mono text-xs text-fg-secondary">{p.lots} лот</span>
                     </div>
                     <PnlCell p={p} />
                   </div>
                   <div className="mono mt-2 grid grid-cols-4 gap-1 text-[11px] text-fg-secondary">
-                    <span>Ср. {formatNumber(p.avgPrice)}</span>
+                    <span>Ср. {formatPositionPrice(p, p.avgPrice)}</span>
                     <span>
-                      Тек. <PriceTicker value={p.currentPrice} format={(v) => formatNumber(v)} />
+                      Тек. <PriceTicker value={p.currentPrice} format={(v) => formatPositionPrice(p, v)} />
                     </span>
                     <SlTpCell p={p} kind="sl" />
                     <SlTpCell p={p} kind="tp" />
                   </div>
+                  {isBondPosition(p) && (
+                    <div className="mt-1 text-[10px] text-fg-muted">Цены облигаций — в % от номинала</div>
+                  )}
                   <AnimatePresence initial={false}>
                     {expanded && (
                       <motion.div
@@ -309,14 +328,18 @@ export default function PositionsTable(props: PositionsTableProps) {
                   )}
                 >
                   <td className="px-4 py-2">
-                    <Link
-                      to={`/terminal?figi=${p.figi ?? p.instrumentId}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="mono text-[13px] font-semibold uppercase text-fg hover:text-yellow"
-                    >
-                      {p.ticker}
-                    </Link>
-                    {p.name && <div className="max-w-[140px] truncate text-[11px] text-fg-muted">{p.name}</div>}
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        to={`/terminal?figi=${p.figi ?? p.instrumentId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mono text-[13px] font-semibold uppercase text-fg hover:text-yellow"
+                      >
+                        {p.ticker}
+                      </Link>
+                      <ClassBadge p={p} />
+                    </div>
+                    {p.name && <div className="max-w-[160px] truncate text-[11px] text-fg-muted">{p.name}</div>}
+                    {isBondPosition(p) && <div className="text-[10px] text-fg-muted">цена в % от номинала</div>}
                   </td>
                   <td className="px-4 py-2">
                     <Badge variant={p.direction === 'long' ? 'long' : 'short'}>
@@ -324,9 +347,9 @@ export default function PositionsTable(props: PositionsTableProps) {
                     </Badge>
                   </td>
                   <td className="mono px-4 py-2 text-right text-[13px] text-fg">{p.lots}</td>
-                  <td className="mono px-4 py-2 text-right text-[13px] text-fg-secondary">{formatNumber(p.avgPrice)}</td>
+                  <td className="mono px-4 py-2 text-right text-[13px] text-fg-secondary">{formatPositionPrice(p, p.avgPrice)}</td>
                   <td className="mono px-4 py-2 text-right text-[13px] text-fg">
-                    <PriceTicker value={p.currentPrice} format={(v) => formatNumber(v)} />
+                    <PriceTicker value={p.currentPrice} format={(v) => formatPositionPrice(p, v)} />
                   </td>
                   <td className="px-4 py-2">
                     <PnlCell p={p} />

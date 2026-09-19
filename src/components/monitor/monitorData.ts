@@ -4,6 +4,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Order, Position } from '@/types/trading';
+import type { Instrument } from '@/types/market';
+import { formatInstrumentPrice } from '@/lib/tinvest/instruments';
+import { formatNumber } from '@/lib/format';
+import { findInstrumentMeta } from '@/components/dashboard/instrumentMeta';
 
 /** Вид заявки для UI: лимитная / стоп / тейк */
 export type OrderKind = 'limit' | 'stop' | 'take';
@@ -132,4 +136,22 @@ export function pnlPct(p: Position): number {
   if (p.avgPrice === 0) return 0;
   const dir = p.direction === 'long' ? 1 : -1;
   return ((p.currentPrice - p.avgPrice) / p.avgPrice) * dir * 100;
+}
+
+// ---------- Классы инструментов ----------
+
+/** Метаданные инструмента позиции (класс, шаг цены, флаги) по uid */
+export function positionInstrument(p: Position): Instrument | undefined {
+  return findInstrumentMeta(p.instrumentId);
+}
+
+/** Цена позиции с точностью по minPriceIncrement класса (облигации — в % от номинала) */
+export function formatPositionPrice(p: Position, v: number): string {
+  const meta = positionInstrument(p);
+  return meta ? formatInstrumentPrice(meta, v) : formatNumber(v);
+}
+
+/** Облигация? Цены облигаций — в % от номинала (бриф §4) */
+export function isBondPosition(p: Position): boolean {
+  return positionInstrument(p)?.type === 'bond';
 }

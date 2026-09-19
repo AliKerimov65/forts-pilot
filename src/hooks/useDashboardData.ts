@@ -5,11 +5,13 @@ import { useConnectionStore } from '@/store/connection';
 import { useMarketStore } from '@/store/market';
 import { useTradingStore } from '@/store/trading';
 import { useRiskStore } from '@/store/risk';
-import { getFutures, getLastPrices, getPortfolio } from '@/lib/tinvest/services';
+import { getEtfs, getFutures, getIndices, getLastPrices, getPortfolio, getShares } from '@/lib/tinvest/services';
 import {
+  MOCK_ETFS,
+  MOCK_INDICES,
   MOCK_INSTRUMENTS,
+  MOCK_SHARES,
   mockGetEquitySeries,
-  mockGetFutures,
   mockGetJournalEvents,
   mockGetLastPrices,
   mockGetPortfolio,
@@ -17,8 +19,47 @@ import {
   mockGetTrades,
 } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS, usePolling } from '@/lib/tinvest/polling';
+import type { Instrument } from '@/types/market';
 
 const EQUITY_PERIODS = ['1D', '1W', '1M', '3M', 'ALL'] as const;
+
+/** Watchlist дашборда покрывает все классы: фьючерсы + индексы (IMOEX/RTSI) + акции + ETF */
+const WATCH_INDEX_TICKERS = ['IMOEX', 'RTSI'];
+const WATCH_SHARE_TICKERS = ['SBER', 'GAZP', 'LKOH'];
+const WATCH_ETF_TICKERS = ['TMOS', 'SBMX'];
+
+function pickByTickers(list: Instrument[], tickers: string[], fallbackCount: number): Instrument[] {
+  const picked = tickers
+    .map((t) => list.find((i) => i.ticker.toUpperCase() === t))
+    .filter((i): i is Instrument => Boolean(i));
+  return picked.length > 0 ? picked : list.slice(0, fallbackCount);
+}
+
+/** Демо-watchlist: фьючерсы + IMOEX/RTSI + акции + ETF */
+function mockWatchlist(): Instrument[] {
+  return [
+    ...MOCK_INSTRUMENTS,
+    ...MOCK_INDICES.filter((i) => WATCH_INDEX_TICKERS.includes(i.ticker)),
+    ...MOCK_SHARES.slice(0, 3),
+    ...MOCK_ETFS.slice(0, 1),
+  ];
+}
+
+/** Боевой watchlist: Futures + Indicatives (IMOEX/RTSI) + Shares + Etfs; при сбое класса — mock-фолбэк этого класса */
+async function liveWatchlist(): Promise<Instrument[]> {
+  const [fut, idx, sh, etf] = await Promise.all([
+    getFutures().catch(() => MOCK_INSTRUMENTS),
+    getIndices().catch(() => MOCK_INDICES),
+    getShares().catch(() => MOCK_SHARES),
+    getEtfs().catch(() => MOCK_ETFS),
+  ]);
+  return [
+    ...fut,
+    ...pickByTickers(idx, WATCH_INDEX_TICKERS, 2),
+    ...pickByTickers(sh, WATCH_SHARE_TICKERS, 3),
+    ...pickByTickers(etf, WATCH_ETF_TICKERS, 1),
+  ];
+}
 
 export function useDashboardData() {
   const token = useConnectionStore((s) => s.token);
@@ -43,14 +84,14 @@ export function useDashboardData() {
     if (seedingRef.current) return;
     seedingRef.current = true;
     try {
-      // Инструменты
+      // Инструменты (все классы: фьючерсы + индексы IMOEX/RTSI + акции + ETF)
       if (useMock) {
-        setInstruments(mockGetFutures());
+        setInstruments(mockWatchlist());
       } else {
         try {
-          setInstruments(await getFutures());
+          setInstruments(await liveWatchlist());
         } catch {
-          setInstruments(mockGetFutures()); // fallback при ошибке сети
+          setInstruments(mockWatchlist()); // fallback при ошибке сети
         }
       }
       // Портфель и позиции

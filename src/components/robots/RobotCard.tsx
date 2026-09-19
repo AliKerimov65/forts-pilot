@@ -21,7 +21,9 @@ import RobotStatusDot from '@/components/RobotStatusDot';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
 import Sparkline from '@/components/Sparkline';
 import { formatRub, formatSignedRub, formatTime } from '@/lib/format';
+import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
 import { synthPnlSeries } from './utils';
+import { useInstrumentMetaMap } from '@/components/dashboard/instrumentMeta';
 import { useRobotsStore } from '@/store/robots';
 import { useRiskStore } from '@/store/risk';
 import { useTradingStore } from '@/store/trading';
@@ -64,6 +66,9 @@ export default function RobotCard({
   const ext = getExtConfig(robot);
   const running = robot.status === 'running';
   const dimmed = robot.status === 'paused' || robot.status === 'off';
+  // Класс инструмента робота (акция/фьючерс/ETF…) — из каталога по uid
+  const metaMap = useInstrumentMetaMap();
+  const instrumentType = metaMap.get(robot.instrumentId)?.type;
 
   const lastTrades = useMemo(() => robotTrades.filter((t) => t.robotId === robot.id).slice(0, 5), [robotTrades, robot.id]);
   const robotOrders = useMemo(
@@ -138,6 +143,11 @@ export default function RobotCard({
           <Badge variant={robot.strategy === 'grid' ? 'accent' : 'info'}>
             {robot.strategy === 'grid' ? 'GRID' : 'СИГНАЛ'}
           </Badge>
+          {instrumentType && (
+            <Badge variant="neutral" size="compact" className="shrink-0">
+              {instrumentTypeLabel(instrumentType)}
+            </Badge>
+          )}
           <Badge variant={ext.mode === 'live' ? 'accent' : 'neutral'}>{ext.mode === 'live' ? 'Боевой' : 'Песочница'}</Badge>
         </div>
         <div className="mt-1 flex items-center gap-2 px-4 text-xs text-fg-secondary">
