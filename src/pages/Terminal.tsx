@@ -29,6 +29,37 @@ import { TIMEFRAMES, fmtPrice, futuresLabel, haptic, roundToStep, type Timeframe
 const FAV_KEY = 'forts-pilot-terminal-favorites';
 const LEGEND_KEY = 'forts-pilot-terminal-legend-seen';
 
+/** Drag-разделитель с «призраком» минимальной ширины/высоты во время drag (v2 §5.2.7) */
+function ResizeSeparator({ hint, className }: { hint: string; className: string }) {
+  const [drag, setDrag] = useState(false);
+  useEffect(() => {
+    if (!drag) return;
+    const up = () => setDrag(false);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [drag]);
+  return (
+    <Separator
+      onPointerDown={() => setDrag(true)}
+      className={cn(
+        'relative bg-transparent transition-colors duration-150 hover:bg-yellow/70',
+        drag && 'bg-yellow/70',
+        className,
+      )}
+    >
+      {drag && (
+        <span className="mono pointer-events-none absolute left-1/2 top-4 z-50 -translate-x-1/2 whitespace-nowrap rounded-md border border-strong bg-overlay px-2 py-1 text-[10px] text-fg-secondary shadow-overlay">
+          {hint}
+        </span>
+      )}
+    </Separator>
+  );
+}
+
 function loadFavorites(): Set<string> {
   try {
     const raw = localStorage.getItem(FAV_KEY);
@@ -83,6 +114,10 @@ export default function Terminal() {
   const [confirmLiveOpen, setConfirmLiveOpen] = useState(false);
   const [dragConfirm, setDragConfirm] = useState<{ kind: 'sl' | 'tp'; price: number } | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  // v2 §5.2.8: после выбора инструмента фокус → «Лоты»; B/S — флэш сегмента направления
+  const lotsRef = useRef<HTMLDivElement | null>(null);
+  const prevUidRef = useRef<string | null>(null);
+  const [dirFlash, setDirFlash] = useState<{ dir: 'long' | 'short'; at: number } | null>(null);
 
   const patchTicket = useCallback((patch: Partial<TicketState>) => setTicket((t) => ({ ...t, ...patch })), []);
 
@@ -108,6 +143,15 @@ export default function Terminal() {
     if (q) setTicket((t) => ({ ...t, price: roundToStep(q.price, instrument?.minPriceIncrement ?? 1) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
+
+  // v2 §5.2.8: после выбора инструмента фокус → поле «Лоты» тикета (desktop, не на первом маунте)
+  useEffect(() => {
+    if (!uid) return;
+    if (prevUidRef.current !== null && prevUidRef.current !== uid && !isMobile) {
+      lotsRef.current?.focus();
+    }
+    prevUidRef.current = uid;
+  }, [uid, isMobile]);
 
   // активные ордера выбранного инструмента (оверлей на графике)
   const instrumentOrders = useMemo(
@@ -345,8 +389,13 @@ export default function Terminal() {
         return;
       }
       const key = e.key.toLowerCase();
-      if (key === 'b') patchTicket({ direction: 'long' });
-      else if (key === 's') patchTicket({ direction: 'short' });
+      if (key === 'b') {
+        patchTicket({ direction: 'long' });
+        setDirFlash({ dir: 'long', at: Date.now() });
+      } else if (key === 's') {
+        patchTicket({ direction: 'short' });
+        setDirFlash({ dir: 'short', at: Date.now() });
+      }
       else if (key === '/') {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -435,6 +484,8 @@ export default function Terminal() {
       priceFlashAt={priceFlashAt}
       marginBuy={margin.buy}
       marginSell={margin.sell}
+      dirFlash={dirFlash}
+      lotsRef={lotsRef}
       className="h-full"
     />
   );
@@ -463,14 +514,15 @@ export default function Terminal() {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
+      className="-mt-1 lg:-mt-2" // v2 §5.2.1: рабочий стол — top-отступ 12px (страница-исключение)
     >
       <Toaster theme="dark" position={isMobile ? 'top-center' : 'top-right'} />
 
       {/* ===== Desktop ===== */}
-      <div className="hidden lg:block" style={{ height: 'calc(100dvh - 120px)' }}>
+      <div className="hidden lg:block" style={{ height: 'calc(100dvh - 112px)' }}>
         <Group orientation="horizontal" className="h-full w-full">
-          {/* Список инструментов */}
-          <Panel id="instruments" defaultSize="17%" minSize="12%">
+          {/* Список инструментов (min 200px, v2 §5.2.7) */}
+          <Panel id="instruments" defaultSize="17%" minSize="200px">
             <div className="h-full overflow-hidden rounded-xl border border-subtle bg-panel">
               <InstrumentList
                 favorites={favorites}
@@ -481,7 +533,7 @@ export default function Terminal() {
               />
             </div>
           </Panel>
-          <Separator className="w-1 bg-transparent transition-colors duration-150 hover:bg-yellow/70" />
+          <ResizeSeparator hint="мин. 200 px" className="w-1" />
 
           {/* Центр */}
           <Panel id="center" defaultSize="58%" minSize="38%">
@@ -498,7 +550,7 @@ export default function Terminal() {
                   <Panel id="chart" defaultSize="62%" minSize="30%">
                     {chartBlock('h-full')}
                   </Panel>
-                  <Separator className="h-1 bg-transparent transition-colors duration-150 hover:bg-yellow/70" />
+                  <ResizeSeparator hint="мин. высота 30%" className="h-1" />
                   <Panel id="tabs" defaultSize="38%" minSize="15%">
                     <CenterTabs
                       instrument={instrument}
@@ -512,20 +564,20 @@ export default function Terminal() {
               </div>
             </div>
           </Panel>
-          <Separator className="w-1 bg-transparent transition-colors duration-150 hover:bg-yellow/70" />
+          <ResizeSeparator hint="мин. 280 px" className="w-1" />
 
-          {/* Правая колонка: стакан + тикет */}
-          <Panel id="right" defaultSize="25%" minSize="18%">
+          {/* Правая колонка: стакан (L0) + тикет (L2, v2 §5.2.4), min 280px */}
+          <Panel id="right" defaultSize="25%" minSize="280px">
             <div className="h-full overflow-hidden rounded-xl border border-subtle bg-panel">
               <Group orientation="vertical" className="h-full w-full">
                 <Panel id="book" defaultSize="50%" minSize="25%">
-                  <div className="h-full bg-inset">
+                  <div className="h-full bg-inset shadow-inset">
                     <OrderBookPanel instrument={instrument} depth={10} onPriceClick={onBookPriceClick} />
                   </div>
                 </Panel>
-                <Separator className="h-1 bg-transparent transition-colors duration-150 hover:bg-yellow/70" />
+                <ResizeSeparator hint="мин. высота 25%" className="h-1" />
                 <Panel id="ticket" defaultSize="50%" minSize="25%">
-                  {ticketBlock}
+                  <div className="h-full bg-panel-raised">{ticketBlock}</div>
                 </Panel>
               </Group>
             </div>
@@ -588,7 +640,7 @@ export default function Terminal() {
         )}
 
         {mobileTab === 'ticket' && (
-          <div className="overflow-hidden rounded-xl border border-subtle bg-panel">{ticketBlock}</div>
+          <div className="overflow-hidden rounded-xl border border-subtle bg-panel-raised shadow-raised">{ticketBlock}</div>
         )}
 
         {mobileTab === 'instruments' && (
@@ -605,39 +657,38 @@ export default function Terminal() {
           </div>
         )}
 
-        {/* Quick Buy/Sell над tabbar (только вкладка График) */}
+        {/* Quick Buy/Sell над tabbar (только вкладка График) — v2 §5.2.6:
+            две раздельные кнопки 64×56px, gap 8px, 12px над tabbar (68px) */}
         {mobileTab === 'chart' && (
-          <div className="fixed inset-x-0 bottom-[72px] z-30 flex justify-center pb-[env(safe-area-inset-bottom)]">
-            <div className="flex overflow-hidden rounded-full border border-subtle shadow-lg shadow-black/40">
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.94 }}
-                onClick={() => {
-                  patchTicket({ direction: 'long', orderType: ticket.orderType === 'market' ? 'market' : ticket.orderType });
-                  setQuickSheet(true);
-                }}
-                className="bg-long px-7 py-2.5 text-sm font-bold text-app"
-              >
-                Купить
-              </motion.button>
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.94 }}
-                onClick={() => {
-                  patchTicket({ direction: 'short' });
-                  setQuickSheet(true);
-                }}
-                className="bg-short px-7 py-2.5 text-sm font-bold text-white"
-              >
-                Продать
-              </motion.button>
-            </div>
+          <div className="fixed inset-x-0 bottom-[calc(80px+env(safe-area-inset-bottom))] z-30 flex justify-center gap-2">
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.94 }}
+              onClick={() => {
+                patchTicket({ direction: 'long', orderType: ticket.orderType === 'market' ? 'market' : ticket.orderType });
+                setQuickSheet(true);
+              }}
+              className="flex h-14 w-16 items-center justify-center rounded-xl bg-long text-sm font-bold text-app shadow-overlay"
+            >
+              Купить
+            </motion.button>
+            <motion.button
+              type="button"
+              whileTap={{ scale: 0.94 }}
+              onClick={() => {
+                patchTicket({ direction: 'short' });
+                setQuickSheet(true);
+              }}
+              className="flex h-14 w-16 items-center justify-center rounded-xl bg-short text-sm font-bold text-white shadow-overlay"
+            >
+              Продать
+            </motion.button>
           </div>
         )}
 
-        {/* Тикет bottom-sheet */}
+        {/* Тикет bottom-sheet (L3: overlay + border-strong + shadow-overlay, v2-components §12) */}
         <Sheet open={quickSheet} onOpenChange={setQuickSheet}>
-          <SheetContent side="bottom" className="border-subtle bg-panel-raised p-0">
+          <SheetContent side="bottom" className="border-strong bg-overlay p-0 shadow-overlay">
             <SheetHeader className="border-b border-subtle p-3">
               <SheetTitle className="text-sm">
                 {ticket.direction === 'long' ? 'Покупка' : 'Продажа'} {instrument ? futuresLabel(instrument) : ''}

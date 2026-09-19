@@ -1,7 +1,8 @@
 // Список инструментов FORTS: поиск + табы категорий + избранное (terminal.md §2.1)
 import { useMemo, useState, type RefObject } from 'react';
-import { Search, Star } from 'lucide-react';
+import { Search, SearchX, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import EmptyState from '@/components/EmptyState';
 import { useMarketStore } from '@/store/market';
 import type { Instrument } from '@/types/market';
 import { categoryOf, fmtPrice, futuresLabel, type InstrumentCategory } from './utils';
@@ -62,7 +63,8 @@ export default function InstrumentList({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-subtle p-3">
+      {/* Шапка списка (поиск + табы) — не скроллится вместе со строками (v2 §5.2.2) */}
+      <div className="shrink-0 border-b border-subtle p-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
           <input
@@ -94,7 +96,18 @@ export default function InstrumentList({
       </div>
       <div className="flex-1 overflow-y-auto">
         {list.length === 0 && (
-          <div className="p-4 text-center text-xs text-fg-muted">Ничего не найдено</div>
+          <EmptyState
+            compact
+            icon={<SearchX className="h-6 w-6" strokeWidth={1.5} />}
+            title="Ничего не найдено"
+            subtitle="Попробуйте другой тикер или сбросьте фильтры"
+            secondaryLabel="Сбросить фильтры"
+            onSecondary={() => {
+              setQuery('');
+              setTab('all');
+              onSearchChange?.('');
+            }}
+          />
         )}
         {list.map((ins) => {
           const q = quotes[ins.uid];
@@ -105,9 +118,10 @@ export default function InstrumentList({
             <div
               key={ins.uid}
               className={cn(
-                'group flex w-full cursor-pointer items-center gap-2 border-b border-subtle/50 px-3 transition-colors hover:bg-panel-raised',
+                'group flex w-full cursor-pointer items-center gap-2 border-b border-subtle/50 px-3 transition-colors duration-[120ms] hover:bg-panel-raised',
                 compact ? 'py-2.5' : 'py-2',
-                active && 'bg-yellow-glow',
+                // v2 §5.2.2: активный инструмент — левая кромка 2px yellow + bg-panel-raised
+                active && 'bg-panel-raised shadow-[inset_2px_0_0_var(--accent-yellow)]',
               )}
               onClick={() => {
                 selectInstrument(ins.uid);

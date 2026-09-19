@@ -2,7 +2,9 @@
 // Тап по цене → подставить в тикет (onPriceClick).
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import EmptyState from '@/components/EmptyState';
 import { useMarketStore } from '@/store/market';
 import type { Instrument, OrderBookLevel } from '@/types/market';
 import { fmtPrice } from './utils';
@@ -78,22 +80,37 @@ export default function OrderBookPanel({ instrument, depth = 10, onPriceClick, c
         <span className="mono text-[11px] text-fg-muted">{depth}×{depth}</span>
       </div>
       <div className="flex-1 overflow-y-auto p-1.5">
+        {/* caption-шапка колонок (v2 §5.2.3) */}
+        <div className="flex h-6 items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-muted">
+          <span>Цена</span>
+          <span>Объём</span>
+        </div>
         {asks.map((l) => (
           <Row key={`a-${l.price}`} level={l} side="ask" maxQty={maxQty} instrument={instrument} onClick={onPriceClick} />
         ))}
-        {/* спред-строка */}
-        <div className="my-1 flex items-center justify-between rounded-[6px] border-y border-yellow/40 bg-inset px-2 py-1">
+        {/* спред-строка: подпись caption справа, не только жёлтая каёмка (v2 §5.2.3) */}
+        <div className="my-1 flex h-7 items-center justify-between rounded-[6px] border-y border-yellow/40 bg-inset px-2">
           <span className="text-[10px] uppercase tracking-wider text-fg-muted">Спред</span>
           <span className="mono text-[12px] font-semibold text-yellow">
             {spread !== null ? fmtPrice(spread, instrument) : '—'}
-            {spreadPct !== null && <span className="ml-1 text-[10px] text-fg-muted">{spreadPct.toFixed(3)}%</span>}
+            {spread !== null && (
+              <span className="ml-1.5 text-[10px] font-normal text-fg-muted">
+                спред {Math.round(spread / (instrument?.minPriceIncrement || 1))}
+                {spreadPct !== null && ` · ${spreadPct.toFixed(3)}%`}
+              </span>
+            )}
           </span>
         </div>
         {bids.map((l) => (
           <Row key={`b-${l.price}`} level={l} side="bid" maxQty={maxQty} instrument={instrument} onClick={onPriceClick} />
         ))}
         {asks.length === 0 && bids.length === 0 && (
-          <div className="p-4 text-center text-xs text-fg-muted">Нет данных стакана</div>
+          <EmptyState
+            compact
+            icon={<BookOpen className="h-6 w-6" strokeWidth={1.5} />}
+            title="Нет данных стакана"
+            subtitle="Котировки появятся после подключения потока"
+          />
         )}
       </div>
       <div className="mono flex justify-between border-t border-subtle px-3 py-1.5 text-[11px] text-fg-muted">

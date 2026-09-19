@@ -1,12 +1,12 @@
 // Дашборд (роут /) — полная реализация по home.md
 // Equity-график, 4 StatCards, донат роботов, позиции, лента событий, watchlist FORTS,
 // флэши цен, pull-to-refresh на мобильном, Lenis на desktop.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { motion } from 'framer-motion';
 import Lenis from 'lenis';
 import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowLeftRight, ArrowRight, Bot, Info, ShieldAlert, ShieldCheck, TrendingUp } from 'lucide-react';
+import { Activity, ArrowLeftRight, ArrowRight, Bot, Info, Layers, RefreshCw, ShieldAlert, ShieldCheck, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useConnectionStore } from '@/store/connection';
 import { useMarketStore } from '@/store/market';
@@ -22,6 +22,7 @@ import PriceTicker from '@/components/PriceTicker';
 import RobotStatusDot from '@/components/RobotStatusDot';
 import Sparkline from '@/components/Sparkline';
 import EmptyState from '@/components/EmptyState';
+import NavBadge from '@/components/NavBadge';
 
 type EquityPeriod = '1D' | '1W' | '1M' | '3M' | 'ALL';
 const PERIOD_LABELS: Record<EquityPeriod, string> = { '1D': '1Д', '1W': '1Н', '1M': '1М', '3M': '3М', ALL: 'Всё' };
@@ -93,14 +94,15 @@ function useSessionCountdown(): string {
   return text;
 }
 
+// v2 §5.1.6: единый контур круга (border-subtle), цвет остаётся только на иконке
 const EVENT_ICONS: Record<JournalEventType, { icon: typeof Info; className: string }> = {
-  trade: { icon: ArrowLeftRight, className: 'bg-panel text-fg-secondary' },
-  order: { icon: ArrowLeftRight, className: 'bg-panel text-fg-secondary' },
-  sl: { icon: ShieldAlert, className: 'bg-short-dim text-short' },
-  tp: { icon: ShieldCheck, className: 'bg-long-dim text-long' },
-  robot: { icon: Bot, className: 'bg-yellow-glow text-yellow' },
-  risk: { icon: ShieldAlert, className: 'bg-[rgba(245,165,36,0.12)] text-warn' },
-  system: { icon: Info, className: 'bg-[rgba(59,130,246,0.12)] text-info' },
+  trade: { icon: ArrowLeftRight, className: 'text-fg-secondary' },
+  order: { icon: ArrowLeftRight, className: 'text-fg-secondary' },
+  sl: { icon: ShieldAlert, className: 'text-short' },
+  tp: { icon: ShieldCheck, className: 'text-long' },
+  robot: { icon: Bot, className: 'text-yellow' },
+  risk: { icon: ShieldAlert, className: 'text-warn' },
+  system: { icon: Info, className: 'text-info' },
 };
 
 export default function Dashboard() {
@@ -180,6 +182,22 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const touchStartY = useRef<number | null>(null);
 
+  // ----- карусель StatCards (mobile): полоса-прогресс 2px вместо snap-точек (v2 §5.1.7) -----
+  const carouselRef = useRef<HTMLElement | null>(null);
+  const [carousel, setCarousel] = useState({ frac: 0, thumb: 1 });
+  const onCarouselScroll = useCallback(() => {
+    const el = carouselRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setCarousel({
+      frac: max > 0 ? el.scrollLeft / max : 0,
+      thumb: el.scrollWidth > 0 ? Math.min(1, el.clientWidth / el.scrollWidth) : 1,
+    });
+  }, []);
+  useEffect(() => {
+    onCarouselScroll();
+  }, [onCarouselScroll]);
+
   const onTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY <= 0) touchStartY.current = e.touches[0].clientY;
   };
@@ -199,7 +217,39 @@ export default function Dashboard() {
     touchStartY.current = null;
   };
 
-  const showCta = robots.length < 1 || true; // ротационный совет дня — показываем всегда
+  // CTA-полоса: при нуле роботов поднимается на место ряда «Роботы» (v2 §5.1.5),
+  // иначе — совет дня внизу страницы.
+  const ctaStrip = (
+    <motion.section
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: 'easeOut', delay: robots.length < 1 ? 0.12 : 0.4 }}
+      className="mt-4 flex flex-col items-start justify-between gap-4 rounded-xl border border-subtle border-l-[3px] border-l-yellow bg-panel-raised p-4 md:flex-row md:items-center md:p-5 lg:mt-5"
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-yellow-glow">
+          <TrendingUp className="h-5 w-5 text-yellow" />
+        </span>
+        <div>
+          <div className="text-sm font-bold text-fg">
+            {robots.length < 1 ? 'Запустите первого робота' : 'Grid-бот по Si набирает популярность'}
+          </div>
+          <div className="text-xs text-fg-secondary">
+            {robots.length < 1
+              ? 'Grid-стратегия зарабатывает на боковике — идеально для FORTS'
+              : 'Совет дня: сетка 8 уровней с шагом 0,4% показала +4,1% за неделю в песочнице'}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate('/robots')}
+        className="h-10 shrink-0 rounded-[10px] bg-yellow px-5 text-sm font-bold text-app transition-[box-shadow,filter] duration-[120ms] hover:glow-accent hover:brightness-[1.06]"
+      >
+        Создать робота
+      </button>
+    </motion.section>
+  );
 
   return (
     <div onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
@@ -218,24 +268,33 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Баннер потери соединения */}
+      {/* Баннер потери соединения — системный паттерн v2 §2.5.3 (40px, slide-down 200ms, warn) */}
       {offline && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-4 flex items-center gap-2 rounded-[10px] border border-yellow/40 bg-yellow-glow px-4 py-2.5 text-sm font-medium text-yellow"
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          role="status"
+          className="mb-4 flex h-10 items-center gap-2 rounded-[10px] border border-warn/40 bg-warn/10 px-4 text-[13px] font-medium text-warn"
         >
-          <span className="h-2 w-2 animate-pulse rounded-full bg-yellow" />
-          Соединение потеряно, переподключение…
+          <RefreshCw className="h-3.5 w-3.5 shrink-0 motion-safe:animate-spin [animation-duration:1.6s]" />
+          <span className="truncate">Соединение потеряно, переподключение…</span>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="ml-auto h-8 shrink-0 rounded-[8px] px-3 text-xs font-semibold text-warn transition-colors duration-[120ms] hover:bg-warn/10 hover:text-fg"
+          >
+            Повторить
+          </button>
         </motion.div>
       )}
 
-      {/* ===== Ряд 1: Hero ===== */}
+      {/* ===== Ряд 1: Hero (приветствие Display 28px — исключение из PageHeader, v2 §1.5) ===== */}
       <motion.section
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="hero-glow flex flex-col gap-4 rounded-xl px-1 py-4 md:flex-row md:items-end md:justify-between"
+        className="hero-glow flex flex-col gap-4 rounded-xl px-1 py-4 md:h-[88px] md:flex-row md:items-end md:justify-between md:py-0"
       >
         <div>
           <h1 className="text-[22px] font-extrabold leading-7 tracking-[-0.02em] text-fg md:text-[28px] md:leading-[34px]">
@@ -259,12 +318,14 @@ export default function Dashboard() {
         </div>
       </motion.section>
 
-      {/* ===== Ряд 2: StatCards ===== */}
+      {/* ===== Ряд 2: StatCards (L2 — главные цифры экрана, v2 §5.1.2) ===== */}
       <motion.section
+        ref={carouselRef}
+        onScroll={onCarouselScroll}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut', delay: 0.06 }}
-        className="mt-2 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-4 md:gap-4 md:overflow-visible"
+        className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-4 md:gap-5 md:overflow-visible lg:mt-5"
       >
         <div className="w-[70vw] min-w-[220px] shrink-0 snap-start md:w-auto md:min-w-0">
           <StatCard
@@ -303,6 +364,7 @@ export default function Dashboard() {
           <StatCard
             label="Активные роботы"
             value={`${runningRobots.length} из ${robots.length}`}
+            icon={<NavBadge kind="count" count={runningRobots.length} variant="accent" />}
             onClick={() => navigate('/robots')}
             footer={
               <div className="flex items-center gap-2">
@@ -329,12 +391,28 @@ export default function Dashboard() {
         </div>
       </motion.section>
 
+      {/* Прогресс-полоса карусели StatCards (mobile, v2 §5.1.7) */}
+      {carousel.thumb < 1 && (
+        <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-inset md:hidden" aria-hidden>
+          <div
+            className="h-full rounded-full bg-yellow"
+            style={{
+              width: `${Math.max(12, carousel.thumb * 100)}%`,
+              marginLeft: `${carousel.frac * (100 - Math.max(12, carousel.thumb * 100))}%`,
+            }}
+          />
+        </div>
+      )}
+
+      {/* Пустая сводка: CTA поднимается наверх и ведёт к действию (v2 §5.1.5) */}
+      {robots.length < 1 && ctaStrip}
+
       {/* ===== Ряд 3: Equity + Роботы ===== */}
       <motion.section
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut', delay: 0.12 }}
-        className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3"
+        className="mt-4 grid grid-cols-1 gap-4 lg:mt-5 lg:grid-cols-3 lg:gap-5"
       >
         {/* Equity-график */}
         <div className="rounded-xl border border-subtle bg-panel p-4 md:p-5 lg:col-span-2">
@@ -415,7 +493,8 @@ export default function Dashboard() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-subtle pt-3 text-xs text-fg-secondary">
+          {/* Полоса метрик — L0-inset 48px, отделена от чарта (v2 §5.1.4) */}
+          <div className="-mx-4 -mb-4 mt-4 flex h-12 flex-wrap items-center gap-x-6 gap-y-1 overflow-hidden rounded-b-xl border-t border-subtle bg-inset px-4 text-xs text-fg-secondary shadow-inset md:-mx-5 md:-mb-5 md:px-5">
             <span>
               Макс. просадка <span className="mono text-short">−4,2%</span>
             </span>
@@ -491,13 +570,18 @@ export default function Dashboard() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut', delay: 0.18 }}
-        className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3"
+        className="mt-4 grid grid-cols-1 gap-4 lg:mt-5 lg:grid-cols-3 lg:gap-5"
       >
         {/* Открытые позиции */}
         <div className="flex flex-col rounded-xl border border-subtle bg-panel p-4 md:p-5">
           <h2 className="text-base font-semibold text-fg">Открытые позиции</h2>
           {positions.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">Позиций нет. Роботы ждут сигнала.</p>
+            <EmptyState
+              compact
+              icon={<Layers className="h-6 w-6" strokeWidth={1.5} />}
+              title="Позиций нет"
+              subtitle="Роботы ждут сигнала — открытые позиции появятся здесь"
+            />
           ) : (
             <div className="mt-2 flex-1 divide-y divide-subtle">
               {positions.slice(0, 4).map((p) => (
@@ -529,7 +613,12 @@ export default function Dashboard() {
         <div className="rounded-xl border border-subtle bg-panel p-4 md:p-5">
           <h2 className="text-base font-semibold text-fg">Лента событий</h2>
           {events.length === 0 ? (
-            <p className="py-8 text-center text-sm text-fg-muted">Событий пока нет</p>
+            <EmptyState
+              compact
+              icon={<Activity className="h-6 w-6" strokeWidth={1.5} />}
+              title="Событий пока нет"
+              subtitle="Сделки, сигналы и алерты появятся в ленте"
+            />
           ) : (
             <div className="mt-2 space-y-0.5">
               {events.slice(0, 6).map((e) => {
@@ -542,13 +631,13 @@ export default function Dashboard() {
                     initial={{ opacity: 0, y: -12 }}
                     animate={{ opacity: 1, y: 0 }}
                     onClick={() => e.type === 'trade' && navigate('/journal')}
-                    className="flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left transition-colors hover:bg-panel-raised"
+                    className="flex h-11 w-full items-center gap-3 rounded-lg px-2 text-left transition-colors duration-[120ms] hover:bg-panel-raised"
                   >
-                    <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full', conf.className)}>
+                    <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-subtle', conf.className)}>
                       <conf.icon className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[13px] text-fg">{e.text}</span>
-                    <span className="mono shrink-0 text-[11px] text-fg-muted">{formatRelative(e.time)}</span>
+                    <span className="mono shrink-0 text-xs text-fg-muted">{formatRelative(e.time)}</span>
                   </motion.button>
                 );
               })}
@@ -605,38 +694,8 @@ export default function Dashboard() {
         </div>
       </motion.section>
 
-      {/* ===== Ряд 5: CTA ===== */}
-      {showCta && (
-        <motion.section
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: 'easeOut', delay: 0.4 }}
-          className="mt-4 flex flex-col items-start justify-between gap-4 rounded-xl border border-subtle border-l-[3px] border-l-yellow bg-panel-raised p-4 md:flex-row md:items-center md:p-5"
-        >
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-yellow-glow">
-              <TrendingUp className="h-5 w-5 text-yellow" />
-            </span>
-            <div>
-              <div className="text-sm font-bold text-fg">
-                {robots.length < 1 ? 'Запустите первого робота' : 'Grid-бот по Si набирает популярность'}
-              </div>
-              <div className="text-xs text-fg-secondary">
-                {robots.length < 1
-                  ? 'Grid-стратегия зарабатывает на боковике — идеально для FORTS'
-                  : 'Совет дня: сетка 8 уровней с шагом 0,4% показала +4,1% за неделю в песочнице'}
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate('/robots')}
-            className="h-10 shrink-0 rounded-[10px] bg-yellow px-5 text-sm font-bold text-app transition-shadow hover:glow-accent"
-          >
-            Создать робота
-          </button>
-        </motion.section>
-      )}
+      {/* ===== Ряд 5: CTA / совет дня (когда роботы есть) ===== */}
+      {robots.length >= 1 && ctaStrip}
     </div>
   );
 }

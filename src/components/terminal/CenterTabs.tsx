@@ -1,9 +1,11 @@
 // Нижние табы центра терминала: Ордера / Позиции / Сделки / Сетка робота (terminal.md §2.5)
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { X } from 'lucide-react';
+import { History, Inbox, Layers, LayoutGrid, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Badge from '@/components/Badge';
+import EmptyState from '@/components/EmptyState';
+import NavBadge from '@/components/NavBadge';
 import PriceTicker from '@/components/PriceTicker';
 import { formatTime } from '@/lib/format';
 import { useMarketStore } from '@/store/market';
@@ -52,15 +54,17 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
     return arr;
   }, [gridRobot]);
 
+  // v2 §5.2.5: счётчики — бейджами mono 11px bg-panel-raised рядом с подписью таба
   const tabs = [
-    { key: 'orders' as const, label: `Ордера (${activeOrders.length})` },
-    { key: 'positions' as const, label: `Позиции (${positions.length})` },
-    { key: 'trades' as const, label: 'Сделки' },
-    { key: 'grid' as const, label: 'Сетка робота' },
+    { key: 'orders' as const, label: 'Ордера', count: activeOrders.length },
+    { key: 'positions' as const, label: 'Позиции', count: positions.length },
+    { key: 'trades' as const, label: 'Сделки', count: undefined },
+    { key: 'grid' as const, label: 'Сетка робота', count: undefined },
   ];
 
-  const thCls = 'mono px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-fg-muted text-right first:text-left';
-  const tdCls = 'mono px-2 py-1.5 text-[12px] text-fg text-right';
+  // Таблицы по спецификации v2 §2.3: заголовок 36px caption 11px, числа вправо mono, строки 40px
+  const thCls = 'mono h-9 px-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted text-right first:text-left';
+  const tdCls = 'mono px-2 py-2 text-[12px] text-fg text-right';
 
   return (
     <div className={cn('flex h-full flex-col', className)}>
@@ -71,11 +75,12 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
             type="button"
             onClick={() => setTab(t.key)}
             className={cn(
-              'relative rounded-t-[8px] px-3 pb-2 pt-1.5 text-[12px] font-semibold transition-colors',
+              'relative flex items-center gap-1.5 rounded-t-[8px] px-3 pb-2 pt-1.5 text-[12px] font-semibold transition-colors duration-[120ms]',
               tab === t.key ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
             )}
           >
             {t.label}
+            {t.count !== undefined && <NavBadge kind="count" count={t.count} variant="neutral" />}
             {tab === t.key && (
               <motion.span layoutId="center-tab" className="absolute inset-x-2 bottom-0 h-0.5 rounded bg-yellow" transition={{ type: 'spring', stiffness: 500, damping: 40 }} />
             )}
@@ -86,7 +91,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
       <div className="flex-1 overflow-y-auto">
         {tab === 'orders' && (
           <table className="w-full">
-            <thead className="sticky top-0 bg-panel">
+            <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
               <tr>
                 <th className={thCls}>Время</th>
                 <th className={thCls}>Тип</th>
@@ -99,7 +104,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
             </thead>
             <tbody>
               {instrumentOrders.map((o) => (
-                <tr key={o.orderId} className="border-b border-subtle/40 hover:bg-panel-raised">
+                <tr key={o.orderId} className="h-10 border-b border-subtle/40 transition-colors duration-[120ms] hover:bg-panel-raised">
                   <td className={tdCls + ' text-left'}>{formatTime(o.time)}</td>
                   <td className={tdCls}>{o.orderType === 'limit' ? 'Лимит' : 'Рынок'}</td>
                   <td className={tdCls}>
@@ -125,7 +130,16 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                 </tr>
               ))}
               {instrumentOrders.length === 0 && (
-                <tr><td colSpan={7} className="p-4 text-center text-xs text-fg-muted">Нет активных ордеров</td></tr>
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState
+                      compact
+                      icon={<Inbox className="h-6 w-6" strokeWidth={1.5} />}
+                      title="Нет активных ордеров"
+                      subtitle="Выставленные ордера появятся здесь — тап по цене в стакане подставит её в тикет"
+                    />
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -133,7 +147,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
 
         {tab === 'positions' && (
           <table className="w-full">
-            <thead className="sticky top-0 bg-panel">
+            <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
               <tr>
                 <th className={thCls}>Инструмент</th>
                 <th className={thCls}>Напр.</th>
@@ -149,7 +163,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                 const cur = quotes[p.instrumentId]?.price ?? p.currentPrice;
                 const pnl = (cur - p.avgPrice) * p.lots * (p.direction === 'long' ? 1 : -1);
                 return (
-                  <tr key={p.instrumentId} className="border-b border-subtle/40 hover:bg-panel-raised">
+                  <tr key={p.instrumentId} className="h-10 border-b border-subtle/40 transition-colors duration-[120ms] hover:bg-panel-raised">
                     <td className={tdCls + ' text-left font-semibold uppercase'}>{p.ticker}</td>
                     <td className={tdCls}>
                       <Badge variant={p.direction === 'long' ? 'long' : 'short'}>
@@ -178,7 +192,16 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                 );
               })}
               {positions.length === 0 && (
-                <tr><td colSpan={7} className="p-4 text-center text-xs text-fg-muted">Нет открытых позиций</td></tr>
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState
+                      compact
+                      icon={<Layers className="h-6 w-6" strokeWidth={1.5} />}
+                      title="Нет открытых позиций"
+                      subtitle="Открытые позиции по счёту появятся здесь"
+                    />
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -203,7 +226,14 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                 )}
               </div>
             ))}
-            {trades.length === 0 && <div className="p-4 text-center text-xs text-fg-muted">Сделок сегодня нет</div>}
+            {trades.length === 0 && (
+              <EmptyState
+                compact
+                icon={<History className="h-6 w-6" strokeWidth={1.5} />}
+                title="Сделок сегодня нет"
+                subtitle="Исполненные сделки появятся в этой ленте"
+              />
+            )}
           </div>
         )}
 
@@ -219,7 +249,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                   </span>
                 </div>
                 <table className="w-full">
-                  <thead className="sticky top-0 bg-panel">
+                  <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
                     <tr>
                       <th className={thCls}>Уровень</th>
                       <th className={thCls}>Цена</th>
@@ -232,7 +262,7 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                       const cur = uid ? quotes[uid]?.price : undefined;
                       const status = cur === undefined ? 'ждёт' : p < cur ? 'исполнен' : i % 3 === 1 ? 'в ордере' : 'ждёт';
                       return (
-                        <tr key={i} className="border-b border-subtle/40">
+                        <tr key={i} className="h-10 border-b border-subtle/40 transition-colors duration-[120ms] hover:bg-panel-raised">
                           <td className={tdCls + ' text-left'}>#{i + 1}</td>
                           <td className={tdCls}>{fmtPrice(p, instrument)}</td>
                           <td className={tdCls}>{'grid' in gridRobot.params ? gridRobot.params.grid.lotsPerLevel : 1}</td>
@@ -248,9 +278,12 @@ export default function CenterTabs({ instrument, gridRobot, onCancelOrder, onClo
                 </table>
               </>
             ) : (
-              <div className="p-4 text-center text-xs text-fg-muted">
-                По {instrument ? futuresLabel(instrument) : 'инструменту'} нет grid-робота
-              </div>
+              <EmptyState
+                compact
+                icon={<LayoutGrid className="h-6 w-6" strokeWidth={1.5} />}
+                title={`По ${instrument ? futuresLabel(instrument) : 'инструменту'} нет grid-робота`}
+                subtitle="Создайте grid-робота, чтобы видеть уровни сетки на графике"
+              />
             )}
           </div>
         )}

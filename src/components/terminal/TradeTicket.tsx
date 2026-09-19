@@ -1,6 +1,6 @@
 // Торговый тикет: Купить/Продать, тип ордера, цена/лоты со степперами,
 // расчёт ГО/объёма, SL/TP-блок с R:R (terminal.md §2.4)
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bot, ChevronDown, Minus, Plus } from 'lucide-react';
 import { Link } from 'react-router';
@@ -36,6 +36,10 @@ export interface TradeTicketProps {
   /** ГО (₽/лот) — из инструмента или getFuturesMargin */
   marginBuy?: number;
   marginSell?: number;
+  /** Флэш сегмента Купить/Продать по шорткату B/S (v2 §5.2.8) */
+  dirFlash?: { dir: Direction; at: number } | null;
+  /** Ref на блок «Лоты» — фокус после выбора инструмента (v2 §5.2.8) */
+  lotsRef?: RefObject<HTMLDivElement | null>;
   className?: string;
 }
 
@@ -138,6 +142,8 @@ export default function TradeTicket({
   priceFlashAt,
   marginBuy,
   marginSell,
+  dirFlash,
+  lotsRef,
   className,
 }: TradeTicketProps) {
   const quotes = useMarketStore((s) => s.quotes);
@@ -145,6 +151,17 @@ export default function TradeTicket({
   const [sltpOpen, setSltpOpen] = useState(false);
   const [slMode, setSlMode] = useState<'price' | 'pct' | 'rub'>('price');
   const [tpMode, setTpMode] = useState<'price' | 'pct' | 'rub'>('price');
+
+  // v2 §5.2.8: шорткаты B/S подсвечивают сегмент Купить/Продать флэшем 300ms
+  const [flashDir, setFlashDir] = useState<Direction | null>(null);
+  const lastFlashAt = useRef(0);
+  useEffect(() => {
+    if (!dirFlash || dirFlash.at === lastFlashAt.current) return;
+    lastFlashAt.current = dirFlash.at;
+    setFlashDir(dirFlash.dir);
+    const t = setTimeout(() => setFlashDir(null), 300);
+    return () => clearTimeout(t);
+  }, [dirFlash]);
 
   const step = instrument?.minPriceIncrement ?? 1;
   const quote = instrument ? quotes[instrument.uid] : undefined;
@@ -210,12 +227,13 @@ export default function TradeTicket({
               whileTap={{ scale: 0.97 }}
               onClick={() => onChange({ direction: d })}
               className={cn(
-                'h-10 rounded-[10px] text-sm font-bold transition-colors duration-200',
+                'h-10 rounded-[10px] text-sm font-bold transition-[colors,box-shadow] duration-200',
                 state.direction === d
                   ? d === 'long'
                     ? 'bg-long text-app'
                     : 'bg-short text-white'
                   : 'border border-subtle text-fg-muted hover:text-fg-secondary',
+                flashDir === d && 'shadow-[0_0_0_3px_rgba(255,221,45,0.45)]',
               )}
             >
               {d === 'long' ? 'Купить' : 'Продать'}
@@ -261,9 +279,9 @@ export default function TradeTicket({
           </div>
         )}
 
-        {/* Лоты */}
+        {/* Лоты — фокус после выбора инструмента (v2 §5.2.8) */}
         <div className="flex items-end justify-between gap-2">
-          <div>
+          <div ref={lotsRef} tabIndex={-1} className="rounded-lg">
             <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-fg-secondary">
               Лоты
             </span>
@@ -388,14 +406,14 @@ export default function TradeTicket({
           </AnimatePresence>
         </div>
 
-        {/* Итоговая кнопка */}
+        {/* Итоговая кнопка — 44px, mono-semibold (v2 §5.2.4) */}
         <motion.button
           type="button"
           whileTap={{ scale: 0.97 }}
           disabled={!instrument || submitting || (state.orderType === 'limit' && state.price === null)}
           onClick={onSubmit}
           className={cn(
-            'h-12 w-full rounded-[10px] text-sm font-bold transition-colors duration-200 disabled:opacity-40',
+            'mono h-11 w-full rounded-[10px] text-sm font-semibold transition-[colors,filter] duration-200 disabled:opacity-45',
             isBuy ? 'bg-long text-app hover:brightness-110' : 'bg-short text-white hover:brightness-110',
           )}
         >
