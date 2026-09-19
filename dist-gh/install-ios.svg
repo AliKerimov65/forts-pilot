@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320" fill="none">
+  <!-- Инструкция iOS: «Поделиться» → «На экран Домой» -->
+  <!-- панель браузера -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="60" y="60" width="150" height="200" rx="16"/>
+    <line x1="60" y1="96" x2="210" y2="96"/>
+    <circle cx="78" cy="78" r="4"/>
+    <circle cx="94" cy="78" r="4"/>
+    <line x1="112" y1="78" x2="190" y2="78"/>
+  </g>
+  <!-- иконка «Поделиться» (квадрат со стрелкой вверх) -->
+  <g stroke="#FFDD2D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 236 L112 206"/>
+    <polyline points="102,216 112,206 122,216"/>
+    <path d="M98 226 L98 240 Q98 248 106 248 L118 248 Q126 248 126 240 L126 226"/>
+  </g>
+  <!-- стрелка перехода -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 8">
+    <line x1="230" y1="160" x2="280" y2="160"/>
+  </g>
+  <polyline points="272,150 284,160 272,170" stroke="#FFDD2D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- экран «Домой»: сетка иконок -->
+  <g stroke="#2A3444" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="296" y="60" width="150" height="200" rx="16"/>
+    <rect x="312" y="80" width="26" height="26" rx="7"/>
+    <rect x="350" y="80" width="26" height="26" rx="7"/>
+    <rect x="388" y="80" width="26" height="26" rx="7"/>
+    <rect x="312" y="120" width="26" height="26" rx="7"/>
+    <rect x="388" y="120" width="26" height="26" rx="7"/>
+    <rect x="312" y="160" width="26" height="26" rx="7"/>
+    <rect x="350" y="160" width="26" height="26" rx="7"/>
+    <rect x="388" y="160" width="26" height="26" rx="7"/>
+    <line x1="340" y1="244" x2="402" y2="244"/>
+  </g>
+  <!-- иконка FORTS PILOT на экране (жёлтая) -->
+  <g stroke="#FFDD2D" stroke-width="3" stroke-linecap="round">
+    <rect x="350" y="120" width="26" height="26" rx="7"/>
+    <circle cx="363" cy="133" r="7"/>
+    <circle cx="363" cy="133" r="2" fill="#FFDD2D" stroke="none"/>
+  </g>
+</svg>

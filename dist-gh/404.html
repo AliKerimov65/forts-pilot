@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>FORTS PILOT — торговые роботы FORTS</title>
+    <meta name="description" content="PWA-терминал автоматической торговли фьючерсами FORTS через API Т-Инвестиций" />
+
+    <!-- PWA -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#0B0E13" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FORTS PILOT" />
+    <link rel="apple-touch-icon" href="/forts-pilot/logo.svg">
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+
+    <!-- Шрифты: Manrope (UI) + JetBrains Mono (числа), оба с кириллицей -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="/forts-pilot/assets/index-BSULRW9T.js"></script>
+    <link rel="stylesheet" crossorigin href="/forts-pilot/assets/index-DD5E5T6r.css">
+  </head>
+  <body>
+    <!-- Splash: графитовый фон + жёлтый логотип + прогресс-бар (убирается после монтирования React) -->
+    <div id="splash">
+      <img src="./logo.svg" alt="FORTS PILOT" width="72" height="72" />
+      <div class="splash-bar"></div>
+    </div>
+    <div id="root"></div>
+  </body>
+</html>

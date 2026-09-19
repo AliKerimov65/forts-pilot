@@ -1,0 +1,13 @@
+{
+  "name": "FORTS PILOT — торговый терминал Т-Инвестиции",
+  "short_name": "FORTS PILOT",
+  "description": "PWA-терминал для автоматической торговли на Т-Инвестициях: акции, фьючерсы, ETF, валюты, облигации, индексы",
+  "start_url": "/forts-pilot/",
+  "scope": "/forts-pilot/",
+  "display": "standalone",
+  "background_color": "#0B0E13",
+  "theme_color": "#0B0E13",
+  "icons": [
+    { "src": "logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
