@@ -33,6 +33,7 @@ import RobotMiniChart from './RobotMiniChart';
 import ConfirmModal from './ConfirmModal';
 import RobotStatsModal from './RobotStatsModal';
 import { RegimeSessionTimeline, RegimeStatusPanel } from './RegimeStatus';
+import { RescueStatusPanel } from './RescueStatus';
 import { useRegimeStatus } from './utils';
 import { ToggleSwitch } from './controls';
 
@@ -89,7 +90,11 @@ export default function RobotCard({
         : ext.signal?.direction === 'short'
           ? 'Short'
           : 'Long/Short'
-      : null;
+      : robot.strategy === 'rescue'
+        ? ext.rescue
+          ? `цель: ${ext.rescue.targetDirection === 'long' ? 'лонг' : 'шорт'} ${ext.rescue.targetLots} лот`
+          : null
+        : null;
 
   const toggleRunning = (next: boolean) => {
     if (next) {
@@ -153,6 +158,8 @@ export default function RobotCard({
                 </Badge>
               )}
             </>
+          ) : robot.strategy === 'rescue' ? (
+            <Badge variant="accent">СПАСАТЕЛЬ</Badge>
           ) : (
             <Badge variant={robot.strategy === 'grid' ? 'accent' : 'info'}>
               {robot.strategy === 'grid' ? 'GRID' : 'СИГНАЛ'}
@@ -200,6 +207,9 @@ export default function RobotCard({
 
         {/* Статус регламента: фаза, отсчёт до события, ноги, маржа */}
         {robot.strategy === 'regime' && <RegimeStatusPanel robotId={robot.id} running={running} />}
+
+        {/* Статус спасателя: вердикт, план, прогресс, дедлайн маржи */}
+        {robot.strategy === 'rescue' && <RescueStatusPanel robotId={robot.id} running={running} />}
 
         {/* Мини-визуал (v2 §5.3.3: у приглушённых — grayscale 20%) */}
         <div

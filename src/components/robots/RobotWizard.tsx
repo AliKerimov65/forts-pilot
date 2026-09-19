@@ -5,14 +5,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, ArrowLeft, ArrowRight, Grid3x3, Scale, TriangleAlert, X } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRight, Check, Grid3x3, LifeBuoy, Scale, TriangleAlert, X } from 'lucide-react';
 import type { Instrument } from '@/types/market';
 import type { Robot, RobotParams, RobotStrategy } from '@/types/robot';
+import type { Position } from '@/types/trading';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
 import Badge from '@/components/Badge';
+import EmptyState from '@/components/EmptyState';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatRub } from '@/lib/format';
 import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
+import { mockGetPositions } from '@/lib/tinvest/mock';
 import { useRobotsStore } from '@/store/robots';
 import { useRiskStore } from '@/store/risk';
 import { useTradingStore } from '@/store/trading';
@@ -20,20 +23,26 @@ import { useConnectionStore } from '@/store/connection';
 import {
   defaultProtection,
   defaultRegimeExt,
+  defaultRescueExt,
   defaultSignalExt,
   getExtConfig,
   useRobotsExtStore,
   type RegimeConfig,
+  type RescueConfig,
   type RobotExtConfig,
 } from '@/lib/robots/config';
 import { TIMEFRAMES, type SignalTimeframe } from '@/lib/robots/signal';
+import { findInstrumentMeta, useInstrumentMetaMap } from '@/components/dashboard/instrumentMeta';
 import InstrumentPicker from './InstrumentPicker';
 import GridPreview from './GridPreview';
 import RegimeParamsPanel from './RegimeParamsPanel';
-import { confettiPieces, validateRegimeConfig } from './utils';
+import RescueParamsPanel from './RescueParamsPanel';
+import { confettiPieces, validateRegimeConfig, validateRescueConfig } from './utils';
 import { NumberField, SegmentedControl, Stepper, ToggleSwitch } from './controls';
 
 const STEPS = ['Стратегия', 'Параметры', 'Защита и запуск'] as const;
+// rescue: дополнительный шаг выбора целевой убыточной позиции (шаг 1.5)
+const RESCUE_STEPS = ['Стратегия', 'Позиция', 'Параметры', 'Защита и запуск'] as const;
 
 interface WizardProps {
   open: boolean;
@@ -93,6 +102,10 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
 
   // Шаг 2 — regime («Регламент MOEX · Hedge»): полный конфиг одним объектом
   const [regime, setRegime] = useState<RegimeConfig>(defaultRegimeExt());
+
+  // Шаг 1.5/2 — rescue («Спасатель позиции»): полный конфиг + тикер целевой позиции
+  const [rescue, setRescue] = useState<RescueConfig>(defaultRescueExt());
+  const [targetTicker, setTargetTicker] = useState('');
 
   // Шаг 3
   const protDefaults = defaultProtection();
@@ -158,6 +171,10 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
       if (editRobot.strategy === 'regime') {
         setRegime({ ...defaultRegimeExt(), ...(ext.regime ?? {}) });
       }
+      if (editRobot.strategy === 'rescue') {
+        setRescue({ ...defaultRescueExt(), ...(ext.rescue ?? {}) });
+        setTargetTicker(editRobot.ticker);
+      }
       setDailyLossLimit(ext.protection.dailyLossLimit);
       setMaxTrades(ext.protection.maxTradesPerDay);
       setLossStreak(ext.protection.stopAfterLossStreak);
@@ -174,6 +191,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
       setTpOn(true);
       setDirection('both');
       setRegime(defaultRegimeExt());
+      setRescue(defaultRescueExt());
+      setTargetTicker('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editRobot, initialStrategy]);
@@ -200,6 +219,10 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   }, [levels, stepType, stepValue]);
 
   // ---------- производные ----------
+  // rescue: 4 шага (выбор целевой позиции между стратегией и параметрами)
+  const steps: readonly string[] = strategy === 'rescue' ? RESCUE_STEPS : STEPS;
+  const stepName = steps[Math.min(step, steps.length - 1)];
+
   const stepPts = useMemo(() => {
     if (!price) return 0;
     return stepType === 'pct' ? (price * stepValue) / 100 : stepValue;
@@ -207,26 +230,53 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
 
   const approxStepPct = price ? (stepPts / price) * 100 : 0;
 
-  const marginPerLot = instrument?.marginBuy ?? (price ? price * 0.12 : 0);
+  // rescue: инструмент цели резолвим из каталога по uid (маркет-стор → mock-фолбэк)
+  const metaMap = useInstrumentMetaMap();
+  const rescueInstrument =
+    strategy === 'rescue' && rescue.targetInstrumentId ? metaMap.get(rescue.targetInstrumentId) : undefined;
+  const refPrice = price ?? (strategy === 'rescue' && rescue.targetAvgPrice > 0 ? rescue.targetAvgPrice : 0);
+  const marginPerLot = instrument?.marginBuy ?? rescueInstrument?.marginBuy ?? (refPrice ? refPrice * 0.12 : 0);
   const totalMargin =
     strategy === 'grid'
       ? marginPerLot * lotsPerLevel * levels
       : strategy === 'regime'
         ? marginPerLot * regime.maxPositionLots
-        : marginPerLot * Math.min(signalLots, maxPosition);
+        : strategy === 'rescue'
+          ? marginPerLot * rescue.maxTotalLots
+          : marginPerLot * Math.min(signalLots, maxPosition);
   const freeMargin = portfolio?.freeMargin ?? 250_000; // демо-фолбэк
   const marginOk = totalMargin <= freeMargin;
 
   const riskPerTrade =
     strategy === 'signal' ? (slOn ? slPts * Math.min(signalLots, maxPosition) : 0) : slOn ? (price ?? 0) * (slValue / 100) * lotsPerLevel : 0;
 
-  const canStep1 = Boolean(instrument || editRobot);
+  const canStep1 = strategy === 'rescue' ? true : Boolean(instrument || editRobot);
+  const canPickTarget = Boolean(rescue.targetInstrumentId);
   const canStep2 =
     strategy === 'grid'
       ? upperBound > lowerBound && lowerBound > 0 && levels >= 3 && lotsPerLevel >= 1 && marginOk
       : strategy === 'regime'
         ? validateRegimeConfig(regime).length === 0 && marginOk
-        : signalLots >= 1 && slPts > 0;
+        : strategy === 'rescue'
+          ? validateRescueConfig(rescue).length === 0 && marginOk
+          : signalLots >= 1 && slPts > 0;
+
+  const canNext =
+    stepName === 'Стратегия' ? canStep1 : stepName === 'Позиция' ? canPickTarget : canStep2;
+
+  /** Выбор целевой убыточной позиции → target*-поля rescue-конфига */
+  const onRescueTarget = (pos: Position) => {
+    setRescue((r) => ({
+      ...r,
+      targetInstrumentId: pos.instrumentId,
+      targetDirection: pos.direction,
+      targetLots: pos.lots,
+      targetAvgPrice: pos.avgPrice,
+      // потолок позиции — минимум исходная + один шаг добавки
+      maxTotalLots: Math.max(r.maxTotalLots, pos.lots + 1),
+    }));
+    setTargetTicker(pos.ticker);
+  };
 
   // ---------- сборка результата ----------
   const buildParams = (): RobotParams =>
@@ -239,16 +289,28 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
             // обязательная оболочка совместимости (движок regime её не читает)
             signal: { signalType: 'regime', timeframe: '5m', lots: regime.lots },
           }
-        : {
-            strategy: 'signal',
-            signal: {
-              signalType,
-              timeframe,
-              lots: Math.min(signalLots, maxPosition),
-              stopLossPts: slOn ? slPts : undefined,
-              takeProfitPts: tpOn ? tpPts : undefined,
-            },
-          };
+        : strategy === 'rescue'
+          ? {
+              strategy: 'rescue',
+              rescue: {
+                targetDirection: rescue.targetDirection,
+                targetLots: rescue.targetLots,
+                targetAvgPrice: rescue.targetAvgPrice,
+                maxTotalLots: rescue.maxTotalLots,
+              },
+              // обязательная оболочка совместимости (движок rescue её не читает)
+              signal: { signalType: 'rescue', timeframe: '5m', lots: rescue.targetLots },
+            }
+          : {
+              strategy: 'signal',
+              signal: {
+                signalType,
+                timeframe,
+                lots: Math.min(signalLots, maxPosition),
+                stopLossPts: slOn ? slPts : undefined,
+                takeProfitPts: tpOn ? tpPts : undefined,
+              },
+            };
 
   const buildExt = (): RobotExtConfig => ({
     mode,
@@ -257,7 +319,9 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
       ? { grid: { stepType, rebuild, stopLossPct: slOn ? slValue : 0, takeProfitPct: tpOn ? tpValue : 0 } }
       : strategy === 'regime'
         ? { regime }
-        : {
+        : strategy === 'rescue'
+          ? { rescue }
+          : {
             signal: {
               emaFast,
               emaSlow,
@@ -274,8 +338,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
 
   const robotName = () =>
     name.trim() ||
-    `${instrument?.ticker ?? editRobot?.ticker ?? 'FORTS'} ${
-      strategy === 'grid' ? 'Grid' : strategy === 'regime' ? 'Регламент' : 'Signal'
+    `${instrument?.ticker ?? editRobot?.ticker ?? targetTicker ?? 'FORTS'} ${
+      strategy === 'grid' ? 'Grid' : strategy === 'regime' ? 'Регламент' : strategy === 'rescue' ? 'Спасатель' : 'Signal'
     } ${robotsCount + 1}`;
 
   const save = (launch: boolean) => {
@@ -302,8 +366,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
     const robot = addRobot({
       name: robotName(),
       strategy,
-      instrumentId: instrument?.uid ?? '',
-      ticker: instrument?.ticker ?? '',
+      instrumentId: strategy === 'rescue' ? rescue.targetInstrumentId : (instrument?.uid ?? ''),
+      ticker: strategy === 'rescue' ? targetTicker : (instrument?.ticker ?? ''),
       params,
       status: launch && !wouldExceed ? 'running' : 'off',
       stats: {
@@ -366,7 +430,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                   </h2>
                   {!done && (
                     <p className="mt-0.5 text-xs leading-4 text-fg-muted">
-                      Шаг <span className="mono">{step + 1}</span> из <span className="mono">3</span> — {STEPS[step]}
+                      Шаг <span className="mono">{step + 1}</span> из <span className="mono">{steps.length}</span> — {stepName}
                     </p>
                   )}
                 </div>
@@ -393,7 +457,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                 <>
                   {/* Прогресс */}
                   <div className="flex items-center gap-2 px-5 pt-4">
-                    {STEPS.map((s, i) => (
+                    {steps.map((s, i) => (
                       <div key={s} className="flex-1">
                         <div className="h-1 overflow-hidden rounded-full bg-inset">
                           <motion.div
@@ -425,7 +489,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                         exit={{ opacity: 0, x: -24 }}
                         transition={{ duration: 0.2 }}
                       >
-                        {step === 0 && (
+                        {stepName === 'Стратегия' && (
                           <StepStrategy
                             strategy={strategy}
                             setStrategy={setStrategy}
@@ -440,7 +504,14 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                             setName={setName}
                           />
                         )}
-                        {step === 1 && strategy === 'grid' && (
+                        {stepName === 'Позиция' && (
+                          <StepRescueTarget
+                            rescue={rescue}
+                            onSelect={onRescueTarget}
+                            editTicker={editRobot?.ticker}
+                          />
+                        )}
+                        {stepName === 'Параметры' && strategy === 'grid' && (
                           <StepGrid
                             levels={levels}
                             setLevels={setLevels}
@@ -465,7 +536,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                             onFromPrice={() => price && recalcBounds(price, levels, stepType, stepValue)}
                           />
                         )}
-                        {step === 1 && strategy === 'signal' && (
+                        {stepName === 'Параметры' && strategy === 'signal' && (
                           <StepSignal
                             signalType={signalType}
                             setSignalType={setSignalType}
@@ -489,10 +560,20 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                             setMaxPosition={setMaxPosition}
                           />
                         )}
-                        {step === 1 && strategy === 'regime' && (
+                        {stepName === 'Параметры' && strategy === 'regime' && (
                           <StepRegime regime={regime} setRegime={setRegime} totalMargin={totalMargin} freeMargin={freeMargin} marginOk={marginOk} />
                         )}
-                        {step === 2 && (
+                        {stepName === 'Параметры' && strategy === 'rescue' && (
+                          <StepRescue
+                            rescue={rescue}
+                            setRescue={setRescue}
+                            ticker={targetTicker || editRobot?.ticker || ''}
+                            totalMargin={totalMargin}
+                            freeMargin={freeMargin}
+                            marginOk={marginOk}
+                          />
+                        )}
+                        {stepName === 'Защита и запуск' && (
                           <StepProtection
                             strategy={strategy}
                             slOn={slOn}
@@ -538,17 +619,17 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                       <div />
                     )}
                     <div className="flex flex-1 justify-end gap-2">
-                      {step < 2 && (
+                      {step < steps.length - 1 && (
                         <button
                           type="button"
-                          disabled={step === 0 ? !canStep1 : !canStep2}
+                          disabled={!canNext}
                           onClick={() => setStep((s) => s + 1)}
                           className="flex h-11 items-center gap-1.5 rounded-[10px] bg-yellow px-5 text-sm font-bold text-app transition-shadow hover:glow-accent disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Далее <ArrowRight className="h-4 w-4" />
                         </button>
                       )}
-                      {step === 2 && !editRobot && (
+                      {step === steps.length - 1 && !editRobot && (
                         <>
                           <button
                             type="button"
@@ -567,7 +648,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                           </button>
                         </>
                       )}
-                      {step === 2 && editRobot && (
+                      {step === steps.length - 1 && editRobot && (
                         <button
                           type="button"
                           onClick={() => save(editRobot.status === 'running')}
@@ -605,15 +686,32 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
           ? 'Grid (сетка)'
           : strategy === 'regime'
             ? 'Регламент MOEX · Hedge'
-            : signalType === 'ema_cross'
-              ? `EMA ${emaFast}/${emaSlow} cross`
-              : 'RSI-разворот',
+            : strategy === 'rescue'
+              ? 'Спасатель позиции'
+              : signalType === 'ema_cross'
+                ? `EMA ${emaFast}/${emaSlow} cross`
+                : 'RSI-разворот',
       ],
-      ['Инструмент', instrument?.ticker ?? editRobot?.ticker ?? '—'],
+      ['Инструмент', (instrument?.ticker ?? editRobot?.ticker ?? (strategy === 'rescue' ? targetTicker : '')) || '—'],
       ...(instrument ? ([['Класс', instrumentTypeLabel(instrument.type)]] as Array<[string, string]>) : []),
       ['Режим', mode === 'live' ? 'Боевой' : 'Песочница'],
     ];
-    if (strategy === 'regime') {
+    if (strategy === 'rescue') {
+      const ticker = targetTicker || editRobot?.ticker || '—';
+      rows.push(
+        [
+          'Спасение',
+          `${ticker} · ${rescue.targetDirection === 'long' ? 'Лонг' : 'Шорт'} ${rescue.targetLots} лота от ${formatNumber(rescue.targetAvgPrice, 2)}`,
+        ],
+        [
+          'План',
+          `до ${rescue.maxAvgSteps} усреднений · возврат маржи за ${rescue.marginReturnBufferMin} мин до закрытия`,
+        ],
+        ['Макс. суммарно', `${rescue.maxTotalLots} лот`],
+        ['Хедж-пауза', rescue.hedgePauseEnabled ? 'вкл' : 'выкл'],
+        ['Стоп-аут', rescue.allowStopOut ? `при просадке > ${Math.round(rescue.maxDrawdownPct * 100)}%` : 'выкл'],
+      );
+    } else if (strategy === 'regime') {
       rows.push(
         [
           'Режим дня',
@@ -687,6 +785,12 @@ function StepStrategy(p: {
               title: 'Регламент MOEX · Hedge',
               text: 'Вход за 10 мин до открытия, флэт за 25–38 мин до закрытия, хедж-режим, защита от маржин-колла',
             },
+            {
+              v: 'rescue' as const,
+              icon: LifeBuoy,
+              title: 'Спасатель позиции',
+              text: 'Анализ убыточной позиции, план спасения: усреднение с защитой от мартингейла, хедж-пауза, выход в безубыток. Плечо только внутри дня — возврат маржи за час до закрытия, без комиссии за перенос',
+            },
           ]
         ).map((opt) => (
           <button
@@ -709,7 +813,11 @@ function StepStrategy(p: {
 
       <div>
         <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.08em] text-fg-secondary">Инструмент</div>
-        {p.editTicker && !p.instrument ? (
+        {p.strategy === 'rescue' && !p.editTicker ? (
+          <div className="rounded-lg border border-subtle bg-inset px-3 py-2.5 text-xs leading-4 text-fg-muted">
+            Инструмент, направление и размер задаются выбранной убыточной позицией на следующем шаге.
+          </div>
+        ) : p.editTicker && !p.instrument ? (
           <div className="rounded-lg border border-subtle bg-inset px-3 py-2.5">
             <span className="mono text-sm font-semibold uppercase text-fg">{p.editTicker}</span>
             <span className="ml-2 text-xs text-fg-muted">инструмент нельзя сменить при редактировании</span>
@@ -1085,6 +1193,162 @@ function StepRegime({
   );
 }
 
+// ================= Шаг 1.5: целевая позиция (rescue) =================
+
+function StepRescueTarget({
+  rescue,
+  onSelect,
+  editTicker,
+}: {
+  rescue: RescueConfig;
+  onSelect: (pos: Position) => void;
+  editTicker?: string;
+}) {
+  // Боевой режим — открытые позиции из trading-стора; демо — mock
+  const token = useConnectionStore((s) => s.token);
+  const livePositions = useTradingStore((s) => s.positions);
+  const positions = token ? livePositions : mockGetPositions();
+  const losing = positions.filter((p) => p.pnl < 0);
+  const selectedKey = rescue.targetInstrumentId
+    ? `${rescue.targetInstrumentId}:${rescue.targetDirection}:${rescue.targetLots}`
+    : null;
+  // Редактирование: целевая позиция могла закрыться — показываем сохранённый снимок цели
+  const savedTargetMissing =
+    Boolean(editTicker) && rescue.targetInstrumentId !== '' &&
+    !losing.some((p) => `${p.instrumentId}:${p.direction}:${p.lots}` === selectedKey);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs leading-5 text-fg-secondary">
+        Выберите открытую убыточную позицию — робот построит план спасения: усреднение по лестнице,
+        хедж-пауза и выход в безубыток. Плечо используется только внутри дня.
+      </p>
+
+      {savedTargetMissing && (
+        <div className="rounded-xl border border-yellow bg-yellow-glow p-3 text-xs leading-5">
+          <span className="mono font-semibold uppercase text-fg">{editTicker}</span>
+          <span className="ml-2 text-fg-secondary">
+            текущая цель: {rescue.targetDirection === 'long' ? 'лонг' : 'шорт'} {rescue.targetLots} лот от{' '}
+            <span className="mono">{formatNumber(rescue.targetAvgPrice, 2)}</span>
+          </span>
+          <div className="mt-1 text-fg-muted">Позиция не найдена среди убыточных — оставлены сохранённые параметры.</div>
+        </div>
+      )}
+
+      {losing.length === 0 && !savedTargetMissing ? (
+        <EmptyState
+          compact
+          icon={<LifeBuoy className="h-6 w-6 text-fg-muted" strokeWidth={1.5} />}
+          title="Нет убыточных позиций для спасения"
+          subtitle="Спасатель запускается на открытую позицию с убытком — как только такая появится в портфеле, она будет в этом списке."
+        />
+      ) : (
+        <div className="space-y-2">
+          {losing.map((pos) => {
+            const key = `${pos.instrumentId}:${pos.direction}:${pos.lots}`;
+            const selected = key === selectedKey;
+            const posType = pos.instrumentType ?? findInstrumentMeta(pos.instrumentId)?.type;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onSelect(pos)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all',
+                  selected
+                    ? 'border-yellow bg-yellow-glow shadow-[0_0_24px_rgba(255,221,45,0.12)]'
+                    : 'border-subtle bg-inset hover:border-strong',
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border',
+                    selected ? 'border-yellow text-yellow' : 'border-subtle text-fg-muted',
+                  )}
+                >
+                  {selected ? <Check className="h-4 w-4" strokeWidth={3} /> : <LifeBuoy className="h-4 w-4" strokeWidth={1.8} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="mono text-sm font-semibold uppercase text-fg">{pos.ticker}</span>
+                    {posType && (
+                      <Badge variant="neutral" size="compact">
+                        {instrumentTypeLabel(posType)}
+                      </Badge>
+                    )}
+                    <Badge variant={pos.direction === 'long' ? 'long' : 'short'} size="compact">
+                      {pos.direction === 'long' ? 'Лонг' : 'Шорт'}
+                    </Badge>
+                  </span>
+                  <span className="mono mt-0.5 block text-xs text-fg-secondary">
+                    {pos.lots} лот · средняя {formatNumber(pos.avgPrice, 2)}
+                  </span>
+                </span>
+                <span className="mono shrink-0 text-sm font-bold text-short">{formatNumber(pos.pnl, 0)} ₽</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ================= Шаг 2: Rescue (Спасатель позиции) =================
+
+function StepRescue({
+  rescue,
+  setRescue,
+  ticker,
+  totalMargin,
+  freeMargin,
+  marginOk,
+}: {
+  rescue: RescueConfig;
+  setRescue: (v: RescueConfig) => void;
+  ticker: string;
+  totalMargin: number;
+  freeMargin: number;
+  marginOk: boolean;
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Цель спасения — снимок позиции с шага «Позиция» */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-subtle bg-inset px-3 py-2.5 text-xs">
+        <LifeBuoy className="h-4 w-4 text-yellow" strokeWidth={1.8} />
+        <span className="mono font-semibold uppercase text-fg">{ticker || '—'}</span>
+        <span className="text-fg-secondary">
+          {rescue.targetDirection === 'long' ? 'лонг' : 'шорт'} {rescue.targetLots} лот от{' '}
+          <span className="mono">{formatNumber(rescue.targetAvgPrice, 2)}</span>
+        </span>
+      </div>
+      <RescueParamsPanel value={rescue} onChange={setRescue} />
+      {/* Живой расчёт маржи (v2 §5.3.7: L0-inset карточка, выход за маржу — рамка border-short) */}
+      <div
+        className={cn(
+          'space-y-1 rounded-lg border p-3 text-[13px] shadow-inset',
+          marginOk ? 'border-subtle bg-inset' : 'border-short bg-short-dim',
+        )}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg-secondary">ГО при макс. позиции</span>
+          <span className={cn('mono font-bold', marginOk ? 'text-fg' : 'text-short')}>≈ {formatRub(totalMargin, 0)}</span>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-fg-secondary">Свободная маржа</span>
+          <span className={cn('mono text-xs', marginOk ? 'text-fg-secondary' : 'text-short')}>{formatRub(freeMargin, 0)}</span>
+        </div>
+        {!marginOk && (
+          <div className="flex items-center gap-1 pt-0.5 text-xs font-medium text-short">
+            <TriangleAlert className="h-3 w-3" />
+            Позиция с добавками не помещается в свободную маржу — уменьшите макс. суммарно
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ================= Шаг 3: Защита =================
 
 function StepProtection(p: {
@@ -1115,13 +1379,15 @@ function StepProtection(p: {
 }) {
   const isSignal = p.strategy === 'signal';
   const isRegime = p.strategy === 'regime';
+  const isRescue = p.strategy === 'rescue';
   return (
     <div className="space-y-5">
-      {/* SL/TP (для regime выходы задаются регламентом на шаге параметров) */}
-      {isRegime ? (
+      {/* SL/TP (для regime/rescue выходы задаются стратегией на шаге параметров) */}
+      {isRegime || isRescue ? (
         <div className="rounded-xl border border-subtle bg-inset p-4 text-xs leading-5 text-fg-secondary">
-          Выходы управляются регламентом: тейк-профит, переоткрытие и принудительный флэт настраиваются
-          на шаге «Параметры». Защита от маржин-колла закрывает позицию при аварийной утилизации маржи.
+          {isRescue
+            ? 'Выходы управляются планом спасения: усреднение, хедж-пауза, восстановление и возврат плеча настраиваются на шаге «Параметры». Аварийный флэт добавок при маржинальном emergency работает всегда.'
+            : 'Выходы управляются регламентом: тейк-профит, переоткрытие и принудительный флэт настраиваются на шаге «Параметры». Защита от маржин-колла закрывает позицию при аварийной утилизации маржи.'}
         </div>
       ) : (
       <div className="space-y-3 rounded-xl border border-subtle bg-inset p-4">

@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,7 @@ import LimitRing from '@/components/risk/LimitRing';
 import NumberStepper from '@/components/risk/NumberStepper';
 import Toggle from '@/components/risk/Toggle';
 import EmergencyStop from '@/components/risk/EmergencyStop';
+import AccountRiskControl, { useRiskAccounts } from '@/components/risk/AccountRiskControl';
 import ToastHost from '@/components/connect/ToastHost';
 import { toast } from '@/components/connect/toast';
 
@@ -188,6 +190,17 @@ export default function Risk() {
   const positions = useTradingStore((s) => s.positions);
   const portfolio = useTradingStore((s) => s.portfolio);
   const mode = useConnectionStore((s) => s.mode);
+
+  // Ручные отключения риск-контроля по счетам (CONTRACT: risk overrides)
+  const accountOverrides = useRiskStore((s) => s.accountOverrides);
+  const riskAccounts = useRiskAccounts();
+  const disabledAccounts = useMemo(
+    () =>
+      Object.entries(accountOverrides)
+        .filter(([, o]) => o.disabled)
+        .map(([id]) => riskAccounts.find((a) => a.id === id)?.name ?? `Счёт •…${id.slice(-4)}`),
+    [accountOverrides, riskAccounts],
+  );
 
   // Черновик настроек (применяются по «Сохранить»)
   const [draftLimits, setDraftLimits] = useState<RiskLimits>(limits);
@@ -427,6 +440,18 @@ export default function Risk() {
       {/* Пилюля статуса под заголовком на mobile (design-v2.md 5.6.1) */}
       <div className="-mt-2 sm:hidden">{pillNode}</div>
 
+      {/* Глобальный индикатор: хотя бы один счёт с ручным отключением рисков */}
+      {disabledAccounts.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-short/50 bg-short/10 px-4 py-3 text-sm text-short">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Для {disabledAccounts.length > 1 ? 'счетов' : 'счёта'} <b>{disabledAccounts.join(', ')}</b> отключён
+            автоматический дневной стоп-лосс — роботы не остановятся при превышении дневного убытка. Защита от
+            маржин-колла продолжает работать.
+          </span>
+        </div>
+      )}
+
       {/* Якоря-чипы секций (mobile, design-v2.md 5.6.8) */}
       <AnchorChips
         anchors={[
@@ -434,6 +459,7 @@ export default function Risk() {
           { id: 'risk-margin', label: 'Маржа' },
           { id: 'risk-emergency', label: 'Аварийная' },
           { id: 'risk-automations', label: 'Автоматики' },
+          { id: 'risk-accounts', label: 'Счета' },
           { id: 'risk-history', label: 'История' },
         ]}
       />
@@ -701,6 +727,18 @@ export default function Risk() {
               Тестовое уведомление
             </button>
           </div>
+        </Section>
+
+        {/* Риск-контроль по счетам — ручное отключение дневного стоп-лосса (risk overrides) */}
+        <Section
+          id="risk-accounts"
+          title="Риск-контроль по счетам"
+          icon={Wallet}
+          desc="Ручное отключение дневного стоп-лосса по счёту; защита от маржин-колла не отключается"
+          danger={disabledAccounts.length > 0}
+          className="lg:col-span-2"
+        >
+          <AccountRiskControl />
         </Section>
 
       </div>

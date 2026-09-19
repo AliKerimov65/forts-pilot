@@ -1,9 +1,44 @@
 // Демо-генераторы для визуалов роботов (детерминированные, чистые — вне компонентов).
 import { useEffect, useState } from 'react';
 import { seededRandom } from '@/lib/tinvest/mock';
-import { getRegimeStatus } from '@/lib/robots/engine';
-import type { RegimeConfig } from '@/lib/robots/config';
+import { getRegimeStatus, getRescueStatus } from '@/lib/robots/engine';
+import type { RegimeConfig, RescueConfig } from '@/lib/robots/config';
 import type { RegimeStatusSnapshot } from '@/lib/robots/regime';
+import type { RescueStatusSnapshot } from '@/lib/robots/rescue';
+
+/** Валидация конфига rescue — список ошибок (пустой = конфиг валиден) */
+export function validateRescueConfig(c: RescueConfig): string[] {
+  const errors: string[] = [];
+  if (c.lotMult > 1.5) {
+    errors.push('Множитель лотов не может превышать 1.5 — защита от мартингейла');
+  }
+  if (c.lotMult < 1) {
+    errors.push('Множитель лотов — минимум 1.0');
+  }
+  if (c.maxAvgSteps < 1 || c.maxAvgSteps > 5) {
+    errors.push('Шагов усреднения: от 1 до 5');
+  }
+  if (!(c.marginWarn < c.marginReduce && c.marginReduce < c.marginEmergency)) {
+    errors.push('Пороги маржи должны возрастать: предупреждение < сокращение < авария');
+  }
+  if (c.targetLots > 0 && c.maxTotalLots <= c.targetLots) {
+    errors.push('Макс. суммарная позиция должна быть больше лотов целевой позиции');
+  }
+  return errors;
+}
+
+/** Снапшот rescue-робота из движка; enabled → поллинг раз в 3с, иначе разовое чтение */
+export function useRescueStatus(robotId: string, enabled: boolean): RescueStatusSnapshot | null {
+  const [snap, setSnap] = useState<RescueStatusSnapshot | null>(() => getRescueStatus(robotId) ?? null);
+  useEffect(() => {
+    const read = () => setSnap(getRescueStatus(robotId) ?? null);
+    read();
+    if (!enabled) return;
+    const t = setInterval(read, 3000);
+    return () => clearInterval(t);
+  }, [robotId, enabled]);
+  return snap;
+}
 
 /** Валидация конфига regime — список ошибок (пустой = конфиг валиден) */
 export function validateRegimeConfig(c: RegimeConfig): string[] {
