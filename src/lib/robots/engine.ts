@@ -16,7 +16,7 @@ import { getCandles, getFuturesMargin, getLastPrices, getMarginAttributes, getOr
 import { mockGetCandles, mockGetLastPrices, mockGetOrderBook } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS } from '@/lib/tinvest/polling';
 import { formatRub } from '@/lib/format';
-import { getExtConfig } from './config';
+import { getExtConfig, DEFAULT_RESCUE_CONFIG } from './config';
 import { gridInventoryGuard, gridTick, initGridRuntime, type GridRuntime } from './grid';
 import {
   applyTick,
@@ -36,6 +36,14 @@ import {
   type RegimeRuntime,
   type RegimeStatusSnapshot,
 } from './regime';
+import {
+  getRescueSnapshot,
+  initRescueRuntime,
+  rescueTick,
+  addsLotsOf,
+  type RescueRuntime,
+  type RescueStatusSnapshot,
+} from './rescue';
 
 const CANDLES_REFRESH_MS = 60_000;
 const CANDLES_COUNT = 120;
@@ -49,6 +57,7 @@ const REGIME_IM_REFRESH_MS = 300_000;
 const gridRuntimes = new Map<string, GridRuntime>();
 const signalRuntimes = new Map<string, SignalRuntime>();
 const regimeRuntimes = new Map<string, RegimeRuntime>();
+const rescueRuntimes = new Map<string, RescueRuntime>();
 const candlesCache = new Map<string, { fetchedAt: number; candles: Candle[] }>();
 
 interface DayCounters {
@@ -84,6 +93,7 @@ export function resetRobotRuntime(robotId: string): void {
   gridRuntimes.delete(robotId);
   signalRuntimes.delete(robotId);
   regimeRuntimes.delete(robotId);
+  rescueRuntimes.delete(robotId);
   counters.delete(robotId);
 }
 
@@ -105,6 +115,14 @@ export function getRobotExposure(robot: Robot): string {
     return net !== 0 || hedge
       ? `нетто ${net > 0 ? '+' : ''}${net} лот (L${rt.legs.longLots}/S${rt.legs.shortLots})`
       : 'вне позиции';
+  }
+  if (robot.strategy === 'rescue') {
+    const rt = rescueRuntimes.get(robot.id);
+    if (!rt) return 'спасатель не инициализирован';
+    const adds = addsLotsOf(rt);
+    return adds > 0 || rt.hedgeLots > 0
+      ? `добавки ${adds} лот${rt.hedgeLots > 0 ? ` + хедж ${rt.hedgeLots}` : ''}, отыграно ${(rt.recoveredPct * 100).toFixed(0)}%`
+      : `мониторинг позиции, отыграно ${(rt.recoveredPct * 100).toFixed(0)}%`;
   }
   const rt = signalRuntimes.get(robot.id);
   if (rt?.position) {
@@ -129,6 +147,17 @@ export function getRegimeStatus(robotId: string): RegimeStatusSnapshot | undefin
   return rt ? getRegimeSnapshot(rt) : undefined;
 }
 
+/** Снапшот состояния rescue-робота для UI (вердикт, план, маржинальный дедлайн) */
+export function getRescueStatus(robotId: string): RescueStatusSnapshot | undefined {
+  const rt = rescueRuntimes.get(robotId);
+  if (!rt) return undefined;
+  const robot = useRobotsStore.getState().robots.find((r) => r.id === robotId);
+  const cfg = robot
+    ? getExtConfig(robot).rescue!
+    : { ...DEFAULT_RESCUE_CONFIG };
+  return getRescueSnapshot(rt, cfg, Date.now());
+}
+
 // ---------- цикл ----------
 
 async function tick(): Promise<void> {
@@ -151,11 +180,18 @@ async function tickInner(): Promise<void> {
   for (const [id] of gridRuntimes) if (!aliveIds.has(id)) gridRuntimes.delete(id);
   for (const [id] of signalRuntimes) if (!aliveIds.has(id)) signalRuntimes.delete(id);
   for (const [id] of regimeRuntimes) if (!aliveIds.has(id)) regimeRuntimes.delete(id);
+  for (const [id] of rescueRuntimes) if (!aliveIds.has(id)) rescueRuntimes.delete(id);
   for (const [id] of counters) if (!aliveIds.has(id)) counters.delete(id);
 
   // --- Дневной стоп риск-менеджмента: остановка всех роботов ---
+  // Ручное отключение рисков по счёту (risk.accountOverrides): глобальный
+  // daily-stop НЕ применяется к счёту с disabled=true.
+  // ВАЖНО: маржинальный emergency-флэт (marginGuard level 'emergency' в
+  // regime/rescue стратегиях) НЕ отключается никогда — overrides на него не влияют.
   const risk = useRiskStore.getState();
-  if (risk.isDailyStopHit() && risk.automations.stopRobotsOnDailyStop) {
+  const currentAccountId = useConnectionStore.getState().accountId;
+  const riskDisabledForAccount = currentAccountId ? risk.isRiskDisabledFor(currentAccountId) : false;
+  if (risk.isDailyStopHit() && risk.automations.stopRobotsOnDailyStop && !riskDisabledForAccount) {
     const today = new Date().toDateString();
     if (running.length > 0 && dailyStopHandledOn !== today) {
       dailyStopHandledOn = today;
@@ -197,6 +233,7 @@ async function tickInner(): Promise<void> {
     try {
       if (robot.strategy === 'grid') await tickGridRobot(robot, price, useMock);
       else if (robot.strategy === 'regime') await tickRegimeRobot(robot, price, useMock);
+      else if (robot.strategy === 'rescue') await tickRescueRobot(robot, price, useMock);
       else await tickSignalRobot(robot, price, useMock);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Ошибка исполнения';
@@ -463,6 +500,139 @@ async function tickRegimeRobot(robot: Robot, price: number, useMock: boolean): P
     useTradingStore.getState().addEvent({
       type: 'risk',
       text: `«${robot.name}»: аварийный стоп по марже (emergency)`,
+      robotId: robot.id,
+      instrumentId: robot.instrumentId,
+    });
+  }
+}
+
+// ---------- rescue (Спасатель позиции) ----------
+
+/** 5-мин свечи для rescue (кэш 60с, общий candlesCache) */
+async function ensureRescueCandles(instrumentId: string, useMock: boolean): Promise<Candle[]> {
+  const key = `${instrumentId}:CANDLE_INTERVAL_5_MIN:rescue`;
+  const cached = candlesCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt <= CANDLES_REFRESH_MS) return cached.candles;
+  const to = new Date();
+  const from = new Date(to.getTime() - CANDLES_COUNT * 300_000);
+  const candles = useMock
+    ? mockGetCandles(instrumentId, 'CANDLE_INTERVAL_5_MIN', CANDLES_COUNT)
+    : await getCandles(instrumentId, from, to, 'CANDLE_INTERVAL_5_MIN', CANDLES_COUNT);
+  candlesCache.set(key, { fetchedAt: Date.now(), candles });
+  return candles;
+}
+
+async function tickRescueRobot(robot: Robot, price: number, useMock: boolean): Promise<void> {
+  if (robot.params.strategy !== 'rescue') return;
+  const cfg = getExtConfig(robot).rescue!;
+  const now = new Date();
+
+  let rt = rescueRuntimes.get(robot.id);
+  if (!rt) {
+    rt = initRescueRuntime();
+    rescueRuntimes.set(robot.id, rt);
+  }
+
+  // План сессий: боевой токен → getTradingSchedules, демо → дефолт FORTS
+  const plan = await getSessionPlan(
+    'MOEX',
+    now,
+    useMock ? undefined : (exchange, from, to) => getTradingSchedules(from, to, exchange),
+  );
+  const phase = getSessionPhase(now, plan);
+
+  // Свечи 5-мин (EMA20/EMA50, RSI, ATR) — ошибка свечей не критична
+  let candles: Candle[] = [];
+  try {
+    candles = await ensureRescueCandles(robot.instrumentId, useMock);
+  } catch {
+    candles = [];
+  }
+
+  // Дисбаланс стакана (троттлинг 10с; ошибка → NaN «нет данных»)
+  if (now.getTime() - rt.cacheBookAt >= REGIME_BOOK_REFRESH_MS) {
+    rt.cacheBookAt = now.getTime();
+    try {
+      const book = useMock ? mockGetOrderBook(robot.instrumentId, 10) : await getOrderBook(robot.instrumentId, 10);
+      const bidVol = book.bids.reduce((a, b) => a + b.quantity, 0);
+      const askVol = book.asks.reduce((a, b) => a + b.quantity, 0);
+      rt.cacheImbalance = bidVol + askVol > 0 ? bidVol / (bidVol + askVol) : NaN;
+    } catch {
+      rt.cacheImbalance = NaN;
+    }
+  }
+
+  // Маржа счёта (троттлинг 30с; демо → mock-атрибуты; ошибка → предыдущее значение)
+  if (now.getTime() - rt.cacheMarginAt >= REGIME_MARGIN_REFRESH_MS || !rt.cacheMargin) {
+    rt.cacheMarginAt = now.getTime();
+    const thresholds = { warn: cfg.marginWarn, reduce: cfg.marginReduce, emergency: cfg.marginEmergency };
+    try {
+      const attrs = useMock ? demoMarginAttributes(0.35) : await getMarginAttributes();
+      rt.cacheMargin = assessMargin(attrs, thresholds);
+    } catch {
+      rt.cacheMargin = rt.cacheMargin ?? assessMargin(demoMarginAttributes(0.35), thresholds);
+    }
+  }
+
+  // ГО на лот (троттлинг 5 мин; демо/ошибка → оценка 15% от цены)
+  if (now.getTime() - rt.cacheImPerLotAt >= REGIME_IM_REFRESH_MS || rt.cacheImPerLot <= 0) {
+    rt.cacheImPerLotAt = now.getTime();
+    if (!useMock) {
+      try {
+        const m = await getFuturesMargin(robot.instrumentId);
+        rt.cacheImPerLot = Math.max(m.buy, m.sell);
+      } catch {
+        rt.cacheImPerLot = price * 0.15;
+      }
+    } else {
+      rt.cacheImPerLot = price * 0.15;
+    }
+  }
+
+  const margin = rt.cacheMargin!;
+  const result = rescueTick(
+    rt,
+    {
+      now,
+      price,
+      plan,
+      phase,
+      candles,
+      orderBookImbalance: rt.cacheImbalance,
+      margin,
+      marginLotsCap: maxLotsByMargin(margin.freeMargin, rt.cacheImPerLot, 0.8),
+      imPerLot: rt.cacheImPerLot,
+    },
+    cfg,
+  );
+
+  // События стратегии → лента журнала
+  for (const text of result.events) {
+    useTradingStore.getState().addEvent({
+      type: 'robot',
+      text: `«${robot.name}»: ${text}`,
+      robotId: robot.id,
+      instrumentId: robot.instrumentId,
+    });
+  }
+
+  // Исполнение ордеров (идемпотентность: флаг pendingOrder на время исполнения)
+  rt.pendingOrder = true;
+  try {
+    for (const action of result.actions) {
+      if (countersExceeded(robot)) break;
+      await executeRobotTrade(robot, action.direction, action.lots, price, useMock, action.pnl, action.reason);
+    }
+  } finally {
+    rt.pendingOrder = false;
+  }
+
+  // Завершение спасения / стоп-аут → робот останавливается с пояснением
+  if (result.stopRobot) {
+    useRobotsStore.getState().setStatus(robot.id, 'paused', result.stopReason);
+    useTradingStore.getState().addEvent({
+      type: 'robot',
+      text: `«${robot.name}» остановлен: ${result.stopReason}`,
       robotId: robot.id,
       instrumentId: robot.instrumentId,
     });

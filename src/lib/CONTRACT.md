@@ -29,7 +29,7 @@
 
 - `market.ts`: `InstrumentType='stock'|'future'|'etf'|'currency'|'bond'|'option'|'index'`; `Instrument {uid, figi, ticker, classCode, name, basicAsset, lot, currency, minPriceIncrement, type, apiTradeAvailable, tradable, buyAvailable?, sellAvailable?, shortEnabled?, forQualInvestor?, tradingStatus?, weekendFlag?, isin?, expirationDate?, marginBuy?, marginSell?}` (все классы инструментов Т-Инвестиций; **индексы: `tradable=false` — только котировки, ордера запрещены, UI обязан блокировать Buy/Sell**), `Candle {time(ms), open, high, low, close, volume, isComplete}`, `OrderBookLevel {price, quantity}`, `OrderBook {instrumentId, bids, asks, lastPrice, limitUp?, limitDown?, time}`, `Quote {instrumentId, price, delta, changePct?, time}`, `CandleInterval` (`CANDLE_INTERVAL_1_MIN|5_MIN|15_MIN|HOUR|DAY|WEEK`).
 - `trading.ts`: `Direction='long'|'short'`, `Position {instrumentId, figi?, ticker, name?, direction, lots, avgPrice, currentPrice, pnl, margin?}`, `OrderStatus='new'|'partially_filled'|'filled'|'cancelled'|'rejected'`, `Order {orderId, accountId, instrumentId, ticker, direction, lotsRequested, lotsExecuted, price?, orderType:'limit'|'market', status, time, message?}`, `Trade {id, orderId?, instrumentId, ticker, direction, lots, price, commission?, pnl?, source:'manual'|'robot', robotId?, robotName?, time}`, `JournalEventType='trade'|'order'|'sl'|'tp'|'robot'|'risk'|'system'`, `JournalEvent {id, type, text, amount?, robotId?, instrumentId?, time}`, `PortfolioSummary {totalAmount, cash, freeMargin, blockedMargin, dayPnl, dayPnlPct, expectedYieldPct?}`, `EquityPoint {time, equity, benchmark?}`.
-- `robot.ts`: `RobotStrategy='grid'|'signal'|'regime'`, `RobotStatus='off'|'running'|'paused'|'error'`, `GridParams {upperBound, lowerBound, levels, lotsPerLevel}`, `SignalParams {signalType, timeframe, lots, stopLossPts?, takeProfitPts?}`, `RegimeParams {lots, maxPositionLots}`, `RobotParams` (union по strategy; вариант `regime` дополнительно несёт обязательное поле-оболочку `signal: SignalParams` — см. раздел про regime ниже), `RobotStats {dayPnl, totalPnl, trades, winRate(0..1), allocatedCapital, lastStartedAt?}`, `Robot {id, name, strategy, instrumentId, ticker, status, errorMessage?, params, stats, createdAt}`.
+- `robot.ts`: `RobotStrategy='grid'|'signal'|'regime'|'rescue'`, `RobotStatus='off'|'running'|'paused'|'error'`, `GridParams {upperBound, lowerBound, levels, lotsPerLevel}`, `SignalParams {signalType, timeframe, lots, stopLossPts?, takeProfitPts?}`, `RegimeParams {lots, maxPositionLots}`, `RescueParams {targetDirection, targetLots, targetAvgPrice, maxTotalLots}`, `RobotParams` (union по strategy; варианты `regime`/`rescue` дополнительно несут обязательное поле-оболочку `signal: SignalParams` — см. разделы про regime/rescue ниже), `RobotStats {dayPnl, totalPnl, trades, winRate(0..1), allocatedCapital, lastStartedAt?}`, `Robot {id, name, strategy, instrumentId, ticker, status, errorMessage?, params, stats, createdAt}`.
 - `account.ts`: `Account {id, name, type, status, openedDate?, accessLevel?}`, `AppMode='sandbox'|'live'`, `ConnectionStatus='online'|'offline'|'error'|'connecting'`.
 
 ## API-слой (`@/lib/tinvest/`)
@@ -148,6 +148,85 @@ marginUtilization, unrealizedPts, lastJump, lastEventText}`. Использов�
 События стратегии (анализ, вход, TP, переоткрытие, клиринг-скачки, флэт) пишутся в ленту
 журнала (`type:'robot'`).
 
+## Стратегия 'rescue' — «Спасатель позиции» (`@/lib/robots/rescue.ts`)
+
+Пользователь выбирает убыточную позицию из портфеля (в демо — из `mockGetPositions()`),
+робот спасает её: анализатор каждый тик → вердикт + план (лестница усреднения) → исполнение
+рыночными ордерами. Полный конфиг — в ext-сторе (`getExtConfig(robot).rescue`), рантайм —
+в памяти движка.
+
+### Создание rescue-робота (UI)
+```ts
+addRobot({
+  name, strategy: 'rescue', instrumentId: position.instrumentId, ticker: position.ticker,
+  params: {
+    strategy: 'rescue',
+    rescue: {
+      targetDirection: position.direction,   // 'long'|'short'
+      targetLots: position.lots,
+      targetAvgPrice: position.avgPrice,
+      maxTotalLots: 6,
+    },
+    // обязательная оболочка совместимости с визардом (движок rescue её не читает):
+    signal: { signalType: 'rescue', timeframe: '5m', lots: position.lots },
+  },
+});
+useRobotsExtStore.getState().setConfig(robot.id, {
+  mode: 'sandbox', protection: defaultProtection(),
+  rescue: { ...DEFAULT_RESCUE_CONFIG, targetInstrumentId: position.instrumentId,
+    targetDirection: position.direction, targetLots: position.lots,
+    targetAvgPrice: position.avgPrice, ...overrides },
+});
+```
+Поля `RescueConfig` (дефолты): `maxAvgSteps`(3), `stepAtrMult`(1.0), `lotMult`(1.3, жёсткий кэп
+≤1.5 — анти-мартингейл), `maxTotalLots`(6), `recoverTargetPct`(0.003), `recoverCloseAll`(true),
+`hedgePauseEnabled`(true), `allowStopOut`(false), `maxDrawdownPct`(0.05),
+`marginReturnBufferMin`(60), `minActionBeforeDeadlineMin`(10), `marginWarn/Reduce/Emergency`
+(0.55/0.70/0.82). Подписи полей — `RESCUE_CONFIG_LABELS`, вердиктов — `RESCUE_VERDICT_LABELS`,
+состояний — `RESCUE_STATE_LABELS` (всё из `@/lib/robots/config`).
+
+### Вердикты анализатора
+`wait` (ждём) / `average_down` (усреднение: цена лучше последней докупки на `stepAtrMult×ATR`,
+RSI-перепроданность или тренд не против) / `hedge_pause` (офсетная позиция замораживает
+просадку; неттинг — счёт уходит во флэт с обратным входом при снятии) / `recover_exit`
+(цена ≥ weightedAvg + recoverTargetPct; `recoverCloseAll=true` — закрыть всё и остановиться,
+иначе — частичные фиксации добавок шагами, исходная позиция остаётся) / `stop_out`
+(только при `allowStopOut=true` и просадке > `maxDrawdownPct` — закрывается ВСЯ позиция,
+включая исходную). Каждый вердикт с `confidence` 0..1 и `reasoning[]` (строки по-русски).
+
+### Маржинальный регламент (ключевое)
+Комиссия Т-Инвестиций за непокрытую позицию = 0 при возврате плеча до конца торгового дня
+(или <5000 ₽). Робот использует плечо ТОЛЬКО внутри дня:
+`marginDeadline = dayClose − marginReturnBufferMin`. До дедлайна добавки/хеджи разрешены
+(с marginGuard); после — новые добавки запрещены, все добавленные роботом лоты и хедж
+закрываются (возврат плеча), исходная позиция пользователя НЕ закрывается принудительно.
+Перед добавкой проверяется `minActionBeforeDeadlineMin` и оценивается комиссия
+`estimateCarryFee(addedValue)` (₽/день, лестница в `marginGuard.ts` — укажите её пользователю
+в reasoning/подсказке). Действия только в фазах `main`/`evening`.
+Маржа `emergency` — немедленный флэт добавок/хеджа (исходная позиция не трогается); этот
+флэт НЕ отключается никакими risk-overrides.
+
+### Статус для UI (`engine.ts`)
+`getRescueStatus(robotId): RescueStatusSnapshot | undefined` —
+`{state ('monitoring'|'averaging'|'hedged'|'recovering'|'returning_margin'|'stopped'),
+verdict, confidence, reasoning[], plan: RescueStep[] ({kind, lots, triggerPrice, done, reason} —
+лестница с done-флагами), addsLots, hedgeLots, recoveredPct (0..1), weightedAvg, drawdownPct,
+marginDeadline (ms), msToDeadline, marginLevel, marginUtilization, lastEventText}`.
+`getRobotExposure(robot)` для rescue — строка вида `добавки 3 лот + хедж 5, отыграно 42%`.
+События (усреднения, хедж, возврат плеча, спасение/стоп-аут) — в ленте журнала (`type:'robot'`).
+После достижения цели или стоп-аута робот → `paused` с пояснением в `errorMessage` нет —
+текст причины уходит в событие; при `stopRobot` статус `paused` и `errorMessage` = причина.
+
+## Ручное отключение рисков по счёту (risk overrides)
+
+`useRiskStore`: `accountOverrides: Record<accountId, {disabled, disabledAt?, note?}>` (persist),
+`setAccountRiskOverride(accountId, disabled, note?)`, селектор `isRiskDisabledFor(accountId)`.
+При `disabled=true` для текущего счёта (`useConnectionStore.accountId`) глобальный daily-stop
+движка НЕ останавливает роботов. **Не отключается никогда**: маржинальный emergency-флэт
+marginGuard (level `'emergency'` в regime/rescue) — защита от маржин-колла абсолютна.
+UI: тумблер на странице риска по текущему счёту + отображение `note`/`disabledAt`; при
+активном override показывать предупреждение, что emergency-флэт продолжает работать.
+
 ## Сторы (zustand, persist в localStorage)
 
 ### `@/store/connection` — `useConnectionStore`
@@ -168,8 +247,8 @@ marginUtilization, unrealizedPts, lastJump, lastEventText}`. Использов�
 Экшены: `addRobot(input): Robot`, `updateRobot(id, patch)`, `removeRobot(id)`, `setStatus(id, status, errorMessage?)`, `updateStats(id, partialStats)`. Селектор `selectActiveRobots(s)`.
 
 ### `@/store/risk` — `useRiskStore`
-Поля: `limits {dailyStopRub, maxPositionLots, maxMarginPct, maxActiveRobots}`, `automations {stopRobotsOnDailyStop, closePositionsOnDailyStop, blockOrdersOnMargin, confirmLiveOrders}`, `events: RiskEvent[]`, `currentDayPnl`, `currentMarginPct`.
-Экшены: `setLimits(patch)`, `setAutomations(patch)`, `addEvent({kind, text})`, `setCurrents(dayPnl, marginPct)`, `isDailyStopHit(): boolean`.
+Поля: `limits {dailyStopRub, maxPositionLots, maxMarginPct, maxActiveRobots}`, `automations {stopRobotsOnDailyStop, closePositionsOnDailyStop, blockOrdersOnMargin, confirmLiveOrders}`, `events: RiskEvent[]`, `currentDayPnl`, `currentMarginPct`, `accountOverrides: Record<accountId, AccountRiskOverride>` (persist — см. раздел «Ручное отключение рисков по счёту»).
+Экшены: `setLimits(patch)`, `setAutomations(patch)`, `addEvent({kind, text})`, `setCurrents(dayPnl, marginPct)`, `isDailyStopHit(): boolean`, `setAccountRiskOverride(accountId, disabled, note?)`, `isRiskDisabledFor(accountId): boolean`.
 
 ## Shared-компоненты (`@/components/`)
 

@@ -65,6 +65,26 @@ export function maxLotsByMargin(freeMargin: number, initialMarginPerLot: number,
 }
 
 /**
+ * Лестница комиссии Т-Инвестиций за перенос непокрытой позиции (маржинальное
+ * плечо) через конец торгового дня. Возвращает ₽/день.
+ * <5000 ₽ → 0; далее фиксированные ступени; свыше 10 млн — ~0.07%/день.
+ * Чистая функция — используется rescue-стратегией для решений до маржинального дедлайна.
+ */
+export function estimateCarryFee(uncoveredRub: number): number {
+  const v = Math.max(0, uncoveredRub);
+  if (v < 5_000) return 0;
+  if (v <= 50_000) return 40;
+  if (v <= 100_000) return 80;
+  if (v <= 250_000) return 190;
+  if (v <= 500_000) return 375;
+  if (v <= 1_000_000) return 750;
+  if (v <= 2_500_000) return 1_850;
+  if (v <= 5_000_000) return 3_700;
+  if (v <= 10_000_000) return 7_200;
+  return Math.round(v * 0.0007);
+}
+
+/**
  * Демо-атрибуты маржи (демо-режим без токена): ликвидный портфель и заблокированная
  * маржа с заданной утилизацией — для проверки уровней warn/reduce/emergency.
  */

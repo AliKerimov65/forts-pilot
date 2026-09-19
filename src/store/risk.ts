@@ -33,6 +33,16 @@ export interface RiskEvent {
   time: number;
 }
 
+/** Ручное отключение рисков по конкретному счёту */
+export interface AccountRiskOverride {
+  /** true — глобальный daily-stop НЕ останавливает роботов этого счёта */
+  disabled: boolean;
+  /** ISO-дата установки/снятия флага */
+  disabledAt?: string;
+  /** Произвольная заметка пользователя («на период отпуска» и т.п.) */
+  note?: string;
+}
+
 export interface RiskState {
   limits: RiskLimits;
   automations: RiskAutomations;
@@ -42,6 +52,8 @@ export interface RiskState {
   currentDayPnl: number;
   /** Текущая загрузка маржи, % */
   currentMarginPct: number;
+  /** Ручные отключения рисков по счетам (ключ — accountId) */
+  accountOverrides: Record<string, AccountRiskOverride>;
 
   setLimits: (patch: Partial<RiskLimits>) => void;
   setAutomations: (patch: Partial<RiskAutomations>) => void;
@@ -49,6 +61,10 @@ export interface RiskState {
   setCurrents: (dayPnl: number, marginPct: number) => void;
   /** Достигнут ли дневной стоп */
   isDailyStopHit: () => boolean;
+  /** Включить/выключить ручное отключение рисков для счёта */
+  setAccountRiskOverride: (accountId: string, disabled: boolean, note?: string) => void;
+  /** Отключены ли риски (daily-stop) для счёта вручную */
+  isRiskDisabledFor: (accountId: string) => boolean;
 }
 
 let riskSeq = 0;
@@ -71,6 +87,7 @@ export const useRiskStore = create<RiskState>()(
       events: [],
       currentDayPnl: 0,
       currentMarginPct: 0,
+      accountOverrides: {},
 
       setLimits: (patch) => set((s) => ({ limits: { ...s.limits, ...patch } })),
       setAutomations: (patch) => set((s) => ({ automations: { ...s.automations, ...patch } })),
@@ -84,10 +101,29 @@ export const useRiskStore = create<RiskState>()(
         const { limits, currentDayPnl } = get();
         return limits.dailyStopRub > 0 && currentDayPnl <= -limits.dailyStopRub;
       },
+
+      setAccountRiskOverride: (accountId, disabled, note) =>
+        set((s) => ({
+          accountOverrides: {
+            ...s.accountOverrides,
+            [accountId]: {
+              disabled,
+              disabledAt: new Date().toISOString(),
+              ...(note !== undefined ? { note } : { note: s.accountOverrides[accountId]?.note }),
+            },
+          },
+        })),
+
+      isRiskDisabledFor: (accountId) => get().accountOverrides[accountId]?.disabled === true,
     }),
     {
       name: 'forts-pilot-risk',
-      partialize: (s) => ({ limits: s.limits, automations: s.automations, events: s.events }),
+      partialize: (s) => ({
+        limits: s.limits,
+        automations: s.automations,
+        events: s.events,
+        accountOverrides: s.accountOverrides,
+      }),
     },
   ),
 );

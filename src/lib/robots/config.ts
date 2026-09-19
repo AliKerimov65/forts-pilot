@@ -125,6 +125,108 @@ export const REGIME_PHASE_LABELS: Record<string, string> = {
   emergency_stopped: 'Аварийный стоп (маржа)',
 };
 
+/** Конфиг стратегии 'rescue' — «Спасатель позиции» */
+export interface RescueConfig {
+  strategy: 'rescue';
+  /** uid инструмента убыточной позиции (= instrumentId робота) */
+  targetInstrumentId: string;
+  /** Направление убыточной позиции пользователя */
+  targetDirection: 'long' | 'short';
+  /** Лотов в убыточной позиции */
+  targetLots: number;
+  /** Средняя цена входа убыточной позиции */
+  targetAvgPrice: number;
+  /** Максимум шагов усреднения (лестница докупок) */
+  maxAvgSteps: number; // 3
+  /** Шаг усреднения: следующая докупка только при цене лучше предыдущей на stepAtrMult × ATR */
+  stepAtrMult: number; // 1.0
+  /** Множитель лотов каждой следующей докупки (жёстко ограничен ≤1.5 — анти-мартингейл-кэп) */
+  lotMult: number; // 1.3
+  /** Максимальная суммарная позиция (исходная + добавки робота), лотов */
+  maxTotalLots: number;
+  /** Цель выхода: weightedAvg × (1 ± recoverTargetPct) */
+  recoverTargetPct: number; // 0.003
+  /** true — при достижении цели закрыть всё (включая исходную позицию); false — частичные фиксации добавок шагами */
+  recoverCloseAll: boolean; // true
+  /** Разрешить офсетный хедж, замораживающий просадку */
+  hedgePauseEnabled: boolean; // true
+  /** Разрешить принудительное закрытие исходной позиции при просадке > maxDrawdownPct */
+  allowStopOut: boolean; // false
+  /** Максимальная просадка исходной позиции (доля 0..1) для stop_out */
+  maxDrawdownPct: number; // 0.05
+  /** Буфер возврата маржи: дедлайн = dayClose − marginReturnBufferMin */
+  marginReturnBufferMin: number; // 60
+  /** Минимум минут до дедлайна, при котором ещё разрешено новое добавление */
+  minActionBeforeDeadlineMin: number; // 10
+  /** Пороги утилизации маржи: предупреждение / сокращение / аварийный флэт добавок */
+  marginWarn: number;
+  marginReduce: number;
+  marginEmergency: number; // 0.55/0.70/0.82
+}
+
+export const DEFAULT_RESCUE_CONFIG: RescueConfig = {
+  strategy: 'rescue',
+  targetInstrumentId: '',
+  targetDirection: 'long',
+  targetLots: 1,
+  targetAvgPrice: 0,
+  maxAvgSteps: 3,
+  stepAtrMult: 1.0,
+  lotMult: 1.3,
+  maxTotalLots: 6,
+  recoverTargetPct: 0.003,
+  recoverCloseAll: true,
+  hedgePauseEnabled: true,
+  allowStopOut: false,
+  maxDrawdownPct: 0.05,
+  marginReturnBufferMin: 60,
+  minActionBeforeDeadlineMin: 10,
+  marginWarn: 0.55,
+  marginReduce: 0.7,
+  marginEmergency: 0.82,
+};
+
+/** Русские подписи полей RescueConfig для UI-формы */
+export const RESCUE_CONFIG_LABELS: Record<keyof Omit<RescueConfig, 'strategy'>, { label: string; description: string }> = {
+  targetInstrumentId: { label: 'Инструмент позиции', description: 'uid убыточной позиции из портфеля, которую спасает робот' },
+  targetDirection: { label: 'Направление позиции', description: 'Лонг или шорт убыточной позиции пользователя' },
+  targetLots: { label: 'Лотов в позиции', description: 'Размер убыточной позиции на момент запуска спасения' },
+  targetAvgPrice: { label: 'Средняя цена позиции', description: 'Средняя цена входа убыточной позиции (из портфеля)' },
+  maxAvgSteps: { label: 'Шагов усреднения', description: 'Максимум докупок по лестнице усреднения' },
+  stepAtrMult: { label: 'Шаг усреднения × ATR', description: 'Следующая докупка только при цене лучше предыдущей на этот шаг' },
+  lotMult: { label: 'Множитель лотов', description: 'Рост размера докупки; жёстко ограничен ≤1.5 (анти-мартингейл)' },
+  maxTotalLots: { label: 'Макс. суммарно, лотов', description: 'Потолок позиции с учётом всех добавок робота' },
+  recoverTargetPct: { label: 'Цель восстановления, %', description: 'Выход при достижении weightedAvg + этот процент' },
+  recoverCloseAll: { label: 'Закрывать всё при цели', description: 'Иначе — частичные фиксации добавок шагами, исходная позиция остаётся' },
+  hedgePauseEnabled: { label: 'Хедж-пауза', description: 'Внутридневной офсетный шорт/лонг, замораживающий просадку' },
+  allowStopOut: { label: 'Разрешить стоп-аут', description: 'Принудительное закрытие исходной позиции при превышении макс. просадки' },
+  maxDrawdownPct: { label: 'Макс. просадка, %', description: 'Порог просадки исходной позиции для stop_out (при allowStopOut)' },
+  marginReturnBufferMin: { label: 'Возврат маржи за, мин', description: 'Дедлайн возврата плеча = конец основной сессии − этот буфер' },
+  minActionBeforeDeadlineMin: { label: 'Мин. до дедлайна, мин', description: 'Новые добавки запрещены, если до дедлайна осталось меньше' },
+  marginWarn: { label: 'Маржа: предупреждение', description: 'Утилизация маржи 0..1 — только индикация и строка в reasoning' },
+  marginReduce: { label: 'Маржа: сокращение', description: 'Запрет новых добавок при высокой загрузке маржи' },
+  marginEmergency: { label: 'Маржа: авария', description: 'Немедленное закрытие добавок и хеджа (исходная позиция не трогается)' },
+};
+
+/** Русские подписи вердиктов rescue-анализатора для UI */
+export const RESCUE_VERDICT_LABELS: Record<string, string> = {
+  wait: 'Ждём',
+  average_down: 'Усреднение',
+  hedge_pause: 'Хедж-пауза',
+  recover_exit: 'Выход с восстановлением',
+  stop_out: 'Стоп-аут',
+};
+
+/** Русские названия состояний rescue-робота для UI-бейджей */
+export const RESCUE_STATE_LABELS: Record<string, string> = {
+  monitoring: 'Мониторинг позиции',
+  averaging: 'Усреднение',
+  hedged: 'Хедж-пауза',
+  recovering: 'Выход с восстановлением',
+  returning_margin: 'Возврат плеча',
+  stopped: 'Завершён',
+};
+
 /** Защитные лимиты робота */
 export interface ProtectionConfig {
   /** Макс. убыток робота в день, ₽ (0 — выкл) */
@@ -142,6 +244,7 @@ export interface RobotExtConfig {
   grid?: GridExtConfig;
   signal?: SignalExtConfig;
   regime?: RegimeConfig;
+  rescue?: RescueConfig;
   protection: ProtectionConfig;
 }
 
@@ -170,6 +273,8 @@ export const defaultSignalExt = (): SignalExtConfig => ({
 });
 
 export const defaultRegimeExt = (): RegimeConfig => ({ ...DEFAULT_REGIME_CONFIG });
+
+export const defaultRescueExt = (): RescueConfig => ({ ...DEFAULT_RESCUE_CONFIG });
 
 interface RobotsExtState {
   configs: Record<string, RobotExtConfig>;
@@ -209,7 +314,9 @@ export function getExtConfig(robot: Robot): RobotExtConfig {
       ? { grid: defaultGridExt() }
       : robot.strategy === 'regime'
         ? { regime: defaultRegimeExt() }
-        : { signal: defaultSignalExt() }),
+        : robot.strategy === 'rescue'
+          ? { rescue: defaultRescueFromParams(robot) }
+          : { signal: defaultSignalExt() }),
   };
   if (!stored) return base;
   return {
@@ -219,5 +326,23 @@ export function getExtConfig(robot: Robot): RobotExtConfig {
     grid: stored.grid ? { ...defaultGridExt(), ...stored.grid } : base.grid,
     signal: stored.signal ? { ...defaultSignalExt(), ...stored.signal } : base.signal,
     regime: stored.regime ? { ...defaultRegimeExt(), ...stored.regime } : base.regime,
+    rescue: stored.rescue
+      ? { ...defaultRescueFromParams(robot), ...stored.rescue }
+      : base.rescue,
+  };
+}
+
+/** Дефолт rescue-конфига с подстановкой целевой позиции из params робота */
+function defaultRescueFromParams(robot: Robot): RescueConfig {
+  const base = defaultRescueExt();
+  if (robot.params.strategy !== 'rescue') return base;
+  const p = robot.params.rescue;
+  return {
+    ...base,
+    targetInstrumentId: robot.instrumentId,
+    targetDirection: p.targetDirection,
+    targetLots: p.targetLots,
+    targetAvgPrice: p.targetAvgPrice,
+    maxTotalLots: Math.max(base.maxTotalLots, p.maxTotalLots),
   };
 }
