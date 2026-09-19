@@ -22,6 +22,7 @@ import ConfirmModal from '@/components/terminal/ConfirmModal';
 import InstrumentList from '@/components/terminal/InstrumentList';
 import InstrumentPanel from '@/components/terminal/InstrumentPanel';
 import OrderBookPanel from '@/components/terminal/OrderBookPanel';
+import PositionsStrip from '@/components/terminal/PositionsStrip';
 import SegmentedControl from '@/components/terminal/SegmentedControl';
 import TradeTicket, { type TicketState } from '@/components/terminal/TradeTicket';
 import { useTerminalData } from '@/components/terminal/useTerminalData';
@@ -77,7 +78,7 @@ export default function Terminal() {
 
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[1]); // 5м
   const data = useTerminalData(timeframe);
-  const { instrument, candles, candlesLoading, gridRobot, gridLevels, dayLow, dayHigh, margin, useMock, tradingStatus } = data;
+  const { instrument, candles, candlesLoading, gridRobot, gridLevels, dayLow, dayHigh, margin, useMock, tradingStatus, positionsError, retryPositions } = data;
 
   const quotes = useMarketStore((s) => s.quotes);
   const quote = instrument ? quotes[instrument.uid] : undefined;
@@ -544,14 +545,18 @@ export default function Terminal() {
         <Group orientation="horizontal" className="h-full w-full">
           {/* Список инструментов (min 200px, v2 §5.2.7) */}
           <Panel id="instruments" defaultSize="17%" minSize="200px">
-            <div className="h-full overflow-hidden rounded-xl border border-subtle bg-panel">
-              <InstrumentList
-                favorites={favorites}
-                onToggleFavorite={toggleFavorite}
-                searchResults={data.remoteResults}
-                onSearchChange={data.searchRemote}
-                searchInputRef={searchInputRef}
-              />
+            <div className="flex h-full flex-col overflow-hidden rounded-xl border border-subtle bg-panel">
+              {/* Открытые позиции — компактная секция над списком инструментов (UX v2) */}
+              <PositionsStrip error={positionsError} onRetry={retryPositions} />
+              <div className="min-h-0 flex-1">
+                <InstrumentList
+                  favorites={favorites}
+                  onToggleFavorite={toggleFavorite}
+                  searchResults={data.remoteResults}
+                  onSearchChange={data.searchRemote}
+                  searchInputRef={searchInputRef}
+                />
+              </div>
             </div>
           </Panel>
           <ResizeSeparator hint="мин. 200 px" className="w-1" />
@@ -665,16 +670,22 @@ export default function Terminal() {
         )}
 
         {mobileTab === 'instruments' && (
-          <div className="overflow-hidden rounded-xl border border-subtle bg-panel" style={{ height: 'calc(100dvh - 260px)' }}>
-            <InstrumentList
-              favorites={favorites}
-              onToggleFavorite={toggleFavorite}
-              searchResults={data.remoteResults}
-              onSearchChange={data.searchRemote}
-              searchInputRef={searchInputRef}
-              compact
-              onSelect={() => setMobileTab('chart')}
-            />
+          <div
+            className="flex flex-col overflow-hidden rounded-xl border border-subtle bg-panel"
+            style={{ height: 'calc(100dvh - 260px)' }}
+          >
+            <PositionsStrip error={positionsError} onRetry={retryPositions} onSelect={() => setMobileTab('chart')} />
+            <div className="min-h-0 flex-1">
+              <InstrumentList
+                favorites={favorites}
+                onToggleFavorite={toggleFavorite}
+                searchResults={data.remoteResults}
+                onSearchChange={data.searchRemote}
+                searchInputRef={searchInputRef}
+                compact
+                onSelect={() => setMobileTab('chart')}
+              />
+            </div>
           </div>
         )}
 

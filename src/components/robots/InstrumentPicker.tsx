@@ -8,9 +8,11 @@ import { Search, ChevronDown } from 'lucide-react';
 import type { Instrument, InstrumentType } from '@/types/market';
 import Badge from '@/components/Badge';
 import { useConnectionStore } from '@/store/connection';
+import { useMarketStore } from '@/store/market';
 import { findInstrumentAll, getLastPrices } from '@/lib/tinvest/services';
-import { isTradable, instrumentTypeLabel } from '@/lib/tinvest/instruments';
-import { mockFindInstrumentAll, mockGetLastPrices } from '@/lib/tinvest/mock';
+import { isTradable, instrumentTypeLabel, searchInstrumentsLocal } from '@/lib/tinvest/instruments';
+import { isCatalogStale, warmUpMarketData } from '@/components/connect/warmup';
+import { mockFindInstrumentAll, mockGetAllInstruments, mockGetLastPrices } from '@/lib/tinvest/mock';
 import { cn } from '@/lib/utils';
 
 /** Заголовки групп по классам (порядок = порядок групп в дропдауне) */
@@ -36,30 +38,59 @@ export default function InstrumentPicker({
   onChange: (instrument: Instrument, lastPrice: number | null) => void;
 }) {
   const token = useConnectionStore((s) => s.token);
+  const instruments = useMarketStore((s) => s.instruments);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  // loading выводится: fetched.q !== query (без синхронных setState в эффекте)
-  const [fetched, setFetched] = useState<{ q: string; items: Instrument[] }>({ q: '', items: [] });
+  // Дозагрузка из API (только когда локально < 5 совпадений); loading: remote.q !== query
+  const [remote, setRemote] = useState<{ q: string; items: Instrument[] }>({ q: '', items: [] });
   const boxRef = useRef<HTMLDivElement>(null);
 
+  // При открытии: прогреть каталог, если он пуст/устарел (>30 мин)
   useEffect(() => {
+    if (open && isCatalogStale()) void warmUpMarketData().catch(() => {});
+  }, [open]);
+
+  // Мгновенный локальный поиск по предзагруженному каталогу (без дебаунса)
+  const localResults = useMemo(() => {
+    const pool = instruments.length > 0 ? instruments : token ? [] : mockGetAllInstruments();
+    const q = query.trim();
+    const base = q ? searchInstrumentsLocal(pool, q) : pool;
+    return base.filter(selectable).slice(0, 40);
+  }, [instruments, query, token]);
+
+  // Удалённый findInstrumentAll — дозагрузка, если локально найдено < 5 (дебаунс 150мс)
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    if (!q || localResults.length >= 5) {
+      setRemote({ q, items: [] });
+      return;
+    }
     let alive = true;
-    // Пустой запрос: в демо отдаём весь каталог, в боевом — стартовую выборку по «S»
-    const req = token ? findInstrumentAll(query || 'S') : Promise.resolve(mockFindInstrumentAll(query));
-    Promise.resolve(req)
-      .then((list) => {
-        if (alive) setFetched({ q: query, items: list.filter(selectable).slice(0, 40) });
-      })
-      .catch(() => {
-        if (alive) setFetched({ q: query, items: mockFindInstrumentAll(query).filter(selectable) });
-      });
+    const timer = setTimeout(() => {
+      const req = token ? findInstrumentAll(q) : Promise.resolve(mockFindInstrumentAll(q));
+      Promise.resolve(req)
+        .then((list) => {
+          if (alive) setRemote({ q, items: list.filter(selectable) });
+        })
+        .catch(() => {
+          if (alive) setRemote({ q, items: [] });
+        });
+    }, 150);
     return () => {
       alive = false;
+      clearTimeout(timer);
     };
-  }, [query, token]);
+  }, [open, query, token, localResults.length]);
 
-  const results = fetched.items;
-  const loading = fetched.q !== query;
+  // Локальные результаты + дозагруженные (дедуп по uid)
+  const results = useMemo(() => {
+    const map = new Map<string, Instrument>();
+    for (const i of localResults) map.set(i.uid, i);
+    for (const i of remote.items) if (!map.has(i.uid)) map.set(i.uid, i);
+    return [...map.values()].slice(0, 40);
+  }, [localResults, remote]);
+  const loading = query.trim().length > 0 && localResults.length < 5 && remote.q !== query.trim();
 
   // Закрытие по клику вне
   useEffect(() => {
@@ -137,8 +168,18 @@ export default function InstrumentPicker({
               />
             </div>
             <div className="max-h-64 overflow-y-auto p-1">
+              {query.trim() && (
+                <div className="mono px-2 pb-1 pt-1 text-[10px] text-fg-muted">
+                  Найдено: {results.length}
+                  {loading && ' · догружаем из API…'}
+                </div>
+              )}
               {loading && results.length === 0 && (
-                <div className="p-3 text-center text-xs text-fg-muted">Поиск…</div>
+                <div className="space-y-1 p-1">
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <div key={i} className="shimmer h-8 rounded-lg" />
+                  ))}
+                </div>
               )}
               {!loading && results.length === 0 && (
                 <div className="p-3 text-center text-xs text-fg-muted">Ничего не найдено</div>

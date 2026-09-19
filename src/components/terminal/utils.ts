@@ -95,3 +95,24 @@ export function haptic(): void {
     /* noop */
   }
 }
+
+/** Плюрализация «лот»: 1 лот · 2 лота · 5 лотов */
+export function lotsWord(n: number): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return 'лот';
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'лота';
+  return 'лотов';
+}
+
+/** Нереализованный P&L позиции в % от средней цены входа */
+export function positionPnlPct(p: { avgPrice: number; currentPrice: number; direction: 'long' | 'short' }): number {
+  if (p.avgPrice === 0) return 0;
+  const dir = p.direction === 'long' ? 1 : -1;
+  return ((p.currentPrice - p.avgPrice) / p.avgPrice) * dir * 100;
+}
+
+/** Формат P&L в ₽ со знаком: "+1 240 ₽" / "−310 ₽" */
+export function fmtPnlRub(v: number): string {
+  return `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('ru-RU')} ₽`;
+}

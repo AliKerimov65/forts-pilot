@@ -3,11 +3,29 @@
 // открылся мгновенно, без спиннера каталогов. Лучшее усилие:
 // частичные ошибки (напр. Indicatives недоступны в песочнице) игнорируются.
 import type { Instrument } from '@/types/market';
-import { getAccounts, getFutures, getIndices, getShares } from '@/lib/tinvest/services';
+import {
+  getAccounts,
+  getBonds,
+  getCurrencies,
+  getEtfs,
+  getFutures,
+  getIndices,
+  getShares,
+} from '@/lib/tinvest/services';
+import { mockGetAllInstruments } from '@/lib/tinvest/mock';
 import { useConnectionStore } from '@/store/connection';
 import { useMarketStore } from '@/store/market';
 
-/** Дедупликация по uid, порядок: фьючерсы → акции → индексы */
+/** Каталог считается устаревшим через 30 минут — терминал при маунте догружает его фоново */
+export const CATALOG_STALE_MS = 30 * 60 * 1000;
+
+/** true, если каталог пуст или загружен более 30 минут назад */
+export function isCatalogStale(): boolean {
+  const { instruments, catalogsLoadedAt } = useMarketStore.getState();
+  return instruments.length === 0 || !catalogsLoadedAt || Date.now() - catalogsLoadedAt > CATALOG_STALE_MS;
+}
+
+/** Дедупликация по uid, порядок: фьючерсы → акции → ETF → валюты → облигации → индексы */
 function mergeInstruments(lists: Instrument[][]): Instrument[] {
   const seen = new Set<string>();
   const out: Instrument[] = [];
@@ -21,12 +39,21 @@ function mergeInstruments(lists: Instrument[][]): Instrument[] {
   return out;
 }
 
-/** Прогрев: Promise.allSettled([getAccounts, getFutures, getShares, getIndices]) → сторы */
+/** Прогрев: Promise.allSettled([getAccounts, getFutures, getShares, getEtfs, getCurrencies, getBonds, getIndices]) → сторы */
 export async function warmUpMarketData(): Promise<void> {
-  const [accounts, futures, shares, indices] = await Promise.allSettled([
+  // Демо-режим (нет токена): каталог из mock-данных, чтобы локальный поиск работал офлайн
+  if (!useConnectionStore.getState().token) {
+    useMarketStore.getState().setInstruments(mockGetAllInstruments());
+    return;
+  }
+
+  const [accounts, futures, shares, etfs, currencies, bonds, indices] = await Promise.allSettled([
     getAccounts(),
     getFutures(),
     getShares(),
+    getEtfs(),
+    getCurrencies(),
+    getBonds(),
     getIndices(),
   ]);
 
@@ -35,7 +62,7 @@ export async function warmUpMarketData(): Promise<void> {
   }
 
   const instruments = mergeInstruments(
-    [futures, shares, indices].map((r) => (r.status === 'fulfilled' ? r.value : [])),
+    [futures, shares, etfs, currencies, bonds, indices].map((r) => (r.status === 'fulfilled' ? r.value : [])),
   );
   if (instruments.length > 0) {
     useMarketStore.getState().setInstruments(instruments);

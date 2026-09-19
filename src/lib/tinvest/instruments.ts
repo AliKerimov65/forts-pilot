@@ -71,6 +71,22 @@ export function formatInstrumentPrice(i: Instrument, price: number): string {
   });
 }
 
+/**
+ * Локальный поиск по каталогу инструментов (ticker / name / figi / isin, case-insensitive).
+ * Мгновенный, без сети — основной путь поиска; удалённый findInstrumentAll — только дозагрузка.
+ */
+export function searchInstrumentsLocal(list: Instrument[], query: string): Instrument[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return list.filter(
+    (i) =>
+      i.ticker.toLowerCase().includes(q) ||
+      i.name.toLowerCase().includes(q) ||
+      (i.figi ?? '').toLowerCase().includes(q) ||
+      (i.isin ?? '').toLowerCase().includes(q),
+  );
+}
+
 /** Торгуется ли инструмент прямо сейчас (по полю tradingStatus; бриф §7) */
 export function isTradingNow(i: Instrument): boolean {
   return (

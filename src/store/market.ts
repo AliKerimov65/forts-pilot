@@ -25,6 +25,8 @@ export interface MarketState {
   orderBook: OrderBook | null;
   /** Фильтр списка инструментов по классу ('all' — все классы) */
   instrumentFilter: InstrumentType | 'all';
+  /** Время последней загрузки каталога инструментов (ms); null — каталог ещё не загружался */
+  catalogsLoadedAt: number | null;
 
   setInstruments: (instruments: Instrument[]) => void;
   selectInstrument: (instrumentId: string) => void;
@@ -47,10 +49,12 @@ export const useMarketStore = create<MarketState>()(
       candles: {},
       orderBook: null,
       instrumentFilter: 'all' as const,
+      catalogsLoadedAt: null,
 
       setInstruments: (instruments) =>
         set((s) => ({
           instruments,
+          catalogsLoadedAt: Date.now(),
           selectedInstrumentId: s.selectedInstrumentId ?? instruments[0]?.uid ?? null,
         })),
 
@@ -94,7 +98,7 @@ export const useMarketStore = create<MarketState>()(
     {
       name: 'forts-pilot-market',
       // persist только выбор инструмента, фильтр и список — котировки/свечи всегда свежие
-      partialize: (s) => ({ selectedInstrumentId: s.selectedInstrumentId, instruments: s.instruments, instrumentFilter: s.instrumentFilter }),
+      partialize: (s) => ({ selectedInstrumentId: s.selectedInstrumentId, instruments: s.instruments, instrumentFilter: s.instrumentFilter, catalogsLoadedAt: s.catalogsLoadedAt }),
     },
   ),
 );

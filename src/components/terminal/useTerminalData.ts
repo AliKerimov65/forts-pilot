@@ -17,6 +17,7 @@ import {
   getLastPrices,
   getOrderBook,
   getOrders,
+  getPortfolio,
   getPositions,
   getShares,
   getTradingStatus,
@@ -34,7 +35,10 @@ import {
   mockGetTrades,
 } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS, usePolling } from '@/lib/tinvest/polling';
+import { searchInstrumentsLocal } from '@/lib/tinvest/instruments';
+import { isCatalogStale, warmUpMarketData } from '@/components/connect/warmup';
 import type { Candle, Instrument, Quote } from '@/types/market';
+import type { Position } from '@/types/trading';
 import type { Robot } from '@/types/robot';
 import { aggregateCandles, TIMEFRAMES, type Timeframe } from './utils';
 
@@ -60,6 +64,10 @@ export interface TerminalData {
   remoteResults: Instrument[];
   /** Торговый статус выбранного инструмента (getTradingStatus); null пока не загружен */
   tradingStatus: TradingStatusInfo | null;
+  /** Ошибка загрузки позиций (боевой режим) — блок «Позиции недоступны» */
+  positionsError: boolean;
+  /** Повторная загрузка позиций после ошибки */
+  retryPositions: () => void;
 }
 
 export function useTerminalData(timeframe: Timeframe): TerminalData {
@@ -80,6 +88,7 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
   const [remoteResults, setRemoteResults] = useState<Instrument[]>([]);
   const [margin, setMargin] = useState<{ buy?: number; sell?: number }>({});
   const [tradingStatus, setTradingStatus] = useState<TradingStatusInfo | null>(null);
+  const [positionsError, setPositionsError] = useState(false);
 
   const instrument = useMemo(
     () => instruments.find((i) => i.uid === selectedId) ?? instruments[0] ?? null,
@@ -96,6 +105,10 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
       // каталог всех классов: акции, фьючерсы, ETF, валюты, ОФЗ + индексы (только котировки)
       const current = useMarketStore.getState().instruments;
       const hasAllClasses = current.some((i) => i.type !== 'future'); // миграция со старого списка «только фьючерсы»
+      if (current.length > 0 && hasAllClasses && isCatalogStale()) {
+        // каталог устарел (>30 мин) — фоновый прогрев, не блокируя терминал
+        void warmUpMarketData().catch(() => {});
+      }
       if (current.length === 0 || !hasAllClasses) {
         if (useMock) {
           setInstruments(mockGetAllInstruments());
@@ -122,8 +135,10 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
         }
       }
       // seed позиций/сделок для демо (аналогично useDashboardData)
+      // positions не persist'ятся, а seeded — да: после перезагрузки вкладки демо-позиции
+      // пропадали («портфель подключён, но позиций не видно») — пересеиваем, если список пуст
       const trading = useTradingStore.getState();
-      if (useMock && !trading.seeded) {
+      if (useMock && (!trading.seeded || trading.positions.length === 0)) {
         trading.setPositions(mockGetPositions());
         trading.setTrades(mockGetTrades());
         trading.markSeeded();
@@ -280,21 +295,52 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     };
   }, [uid, instrument, useMock]);
 
-  // ---------- поллинг ордеров/позиций (боевой режим) ----------
+  // ---------- поллинг ордеров/позиций (боевой режим, только при подключении) ----------
   const tradingFetcher = useCallback(async () => {
     if (useMock) return;
     const t = useTradingStore.getState();
     try {
-      const [orders, positions] = await Promise.all([getOrders(), getPositions()]);
-      t.setOrders(orders);
-      t.setPositions(positions);
+      t.setOrders(await getOrders());
     } catch {
-      /* сохраняем последние известные */
+      /* ордера: сохраняем последние известные */
+    }
+    try {
+      // Позиции: getPortfolio (все классы + P&L), fallback на getPositions (только фьючерсы)
+      let list: Position[];
+      try {
+        list = (await getPortfolio()).positions;
+      } catch {
+        list = await getPositions();
+      }
+      const byUid = new Map(useMarketStore.getState().instruments.map((i) => [i.uid, i]));
+      const enriched = list
+        .map((p) => {
+          const meta = byUid.get(p.instrumentId);
+          // Неттинг: quantity из API приходит в ШТУКАХ → лоты = штуки / lot
+          const lot = meta && meta.lot > 0 ? meta.lot : 1;
+          return {
+            ...p,
+            lots: Math.max(0, Math.round(p.lots / lot)),
+            ticker: meta?.ticker ?? (p.ticker || p.instrumentId.slice(0, 8)),
+            name: p.name ?? meta?.name,
+          };
+        })
+        .filter((p) => p.lots > 0);
+      t.setPositions(enriched);
+      setPositionsError(false);
+    } catch {
+      // не роняем терминал — блок «Позиции недоступны» с кнопкой повтора
+      setPositionsError(true);
     }
   }, [useMock]);
   usePolling(tradingFetcher, { intervalMs: POLLING_DEFAULTS.positions, enabled: !useMock });
+  const retryPositions = useCallback(() => {
+    void tradingFetcher();
+  }, [tradingFetcher]);
 
-  // ---------- удалённый поиск инструментов ----------
+  // ---------- удалённый поиск инструментов (только дозагрузка поверх локального) ----------
+  // Локальный поиск по каталогу market store выполняется мгновенно в InstrumentList;
+  // findInstrumentAll дергаем лишь когда локально найдено < 5 совпадений (дебаунс 150мс).
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRemote = useCallback(
     (q: string) => {
@@ -304,15 +350,20 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
         setRemoteResults([]);
         return;
       }
+      const localCount = searchInstrumentsLocal(useMarketStore.getState().instruments, query).length;
+      if (localCount >= 5) {
+        setRemoteResults([]);
+        return;
+      }
       searchTimer.current = setTimeout(async () => {
         try {
-          // поиск по ВСЕМ классам (дебаунс 400ms)
+          // поиск по ВСЕМ классам (дебаунс 150ms)
           const res = useMock ? mockFindInstrumentAll(query) : await findInstrumentAll(query);
           setRemoteResults(res);
         } catch {
           /* игнорируем */
         }
-      }, 400);
+      }, 150);
     },
     [useMock],
   );
@@ -362,6 +413,8 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     searchRemote,
     remoteResults,
     tradingStatus,
+    positionsError,
+    retryPositions,
   };
 }
 

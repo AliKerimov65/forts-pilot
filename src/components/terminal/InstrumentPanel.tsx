@@ -4,10 +4,11 @@ import { Maximize2, Minimize2, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import PriceTicker from '@/components/PriceTicker';
 import { useMarketStore } from '@/store/market';
+import { useTradingStore } from '@/store/trading';
 import { formatDateShort } from '@/lib/format';
 import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
 import type { Instrument } from '@/types/market';
-import { fmtPrice, futuresLabel } from './utils';
+import { fmtPnlRub, fmtPrice, futuresLabel, lotsWord } from './utils';
 
 export interface InstrumentPanelProps {
   instrument: Instrument;
@@ -35,6 +36,8 @@ export default function InstrumentPanel({
   compact,
 }: InstrumentPanelProps) {
   const quotes = useMarketStore((s) => s.quotes);
+  // открытая позиция по выбранному инструменту (бейдж «В позиции»)
+  const openPosition = useTradingStore((s) => s.positions.find((p) => p.instrumentId === instrument.uid));
   const quote = quotes[instrument.uid];
   const price = quote?.price;
   const pct = quote?.changePct ?? 0;
@@ -73,7 +76,7 @@ export default function InstrumentPanel({
 
       <div className="min-w-0">
         <div className="flex items-baseline gap-2">
-          <span className={cn('mono font-bold uppercase text-fg', compact ? 'text-sm' : 'text-xl')}>
+          <span className={cn('mono shrink-0 whitespace-nowrap font-bold uppercase text-fg', compact ? 'text-sm' : 'text-xl')}>
             {futuresLabel(instrument)}
           </span>
           {/* бейдж класса + валюта расчётов */}
@@ -83,6 +86,21 @@ export default function InstrumentPanel({
           <span className="mono shrink-0 text-[10px] font-semibold uppercase text-fg-muted">
             {instrument.currency}
           </span>
+          {/* Плашка открытой позиции по выбранному инструменту */}
+          {openPosition && (
+            <span
+              className={cn(
+                'shrink-0 whitespace-nowrap rounded-[4px] border px-1.5 py-px font-semibold leading-[14px]',
+                compact ? 'text-[9px]' : 'text-[10px]',
+                openPosition.pnl >= 0
+                  ? 'border-long/40 bg-long-dim text-long'
+                  : 'border-short/40 bg-short-dim text-short',
+              )}
+            >
+              В позиции: {openPosition.lots} {lotsWord(openPosition.lots)} ·{' '}
+              {openPosition.direction === 'long' ? 'Лонг' : 'Шорт'} · P&L {fmtPnlRub(openPosition.pnl)}
+            </span>
+          )}
           {!compact && <span className="truncate text-xs text-fg-secondary">{instrument.name}</span>}
         </div>
         {!compact && (

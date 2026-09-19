@@ -66,10 +66,12 @@ export default function InstrumentList({
     let arr = [...map.values()];
     const q = query.trim().toLowerCase();
     if (q) {
+      // мгновенный локальный поиск по каталогу: тикер / название / figi / isin
       arr = arr.filter(
         (i) =>
           i.ticker.toLowerCase().includes(q) ||
           i.name.toLowerCase().includes(q) ||
+          (i.figi ?? '').toLowerCase().includes(q) ||
           (i.isin ?? '').toLowerCase().includes(q),
       );
     }
@@ -126,9 +128,27 @@ export default function InstrumentList({
             <NavBadge kind="count" count={favorites.size} variant={favOnly ? 'accent' : 'neutral'} />
           </button>
         </div>
+        {/* Счётчик локального поиска (v2 §5.5.2 — паттерн «Найдено: N») */}
+        {query.trim() && (
+          <div className="mono mt-2 text-[11px] text-fg-muted">
+            Найдено: {list.length}
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto">
-        {list.length === 0 && (
+        {/* каталог ещё грузится — скелетон строк вместо пустого состояния (v2 §2.5) */}
+        {instruments.length === 0 &&
+          Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="flex items-center gap-2 border-b border-subtle/50 px-3 py-2">
+              <div className="shimmer h-3.5 w-3.5 rounded" />
+              <div className="min-w-0 flex-1">
+                <div className="shimmer h-3 w-16 rounded" />
+                <div className="shimmer mt-1 h-2.5 w-24 rounded" />
+              </div>
+              <div className="shimmer h-3 w-12 rounded" />
+            </div>
+          ))}
+        {instruments.length > 0 && list.length === 0 && (
           <EmptyState
             compact
             icon={<SearchX className="h-6 w-6" strokeWidth={1.5} />}
