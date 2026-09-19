@@ -1,5 +1,7 @@
 // Типы торговли: позиции, ордера, сделки, журнал
 
+import type { InstrumentType } from './market';
+
 /** Направление позиции/ордера */
 export type Direction = 'long' | 'short';
 
@@ -16,10 +18,14 @@ export interface Position {
   avgPrice: number;
   /** Текущая цена (пункты) */
   currentPrice: number;
-  /** Нереализованный P&L, ₽ */
+  /** Нереализованный P&L, ₽ (для облигаций включает накопленный НКД) */
   pnl: number;
   /** ГО под позицию, ₽ */
   margin?: number;
+  /** Класс инструмента по данным API (фолбэк, если каталог не резолвит uid) */
+  instrumentType?: InstrumentType;
+  /** НКД облигации, ₽ на единицу (currentNkd из Portfolio; только для облигаций) */
+  nkd?: number;
 }
 
 /** Статус ордера */
