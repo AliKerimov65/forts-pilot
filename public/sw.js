@@ -1,8 +1,8 @@
 /* FORTS PILOT — Service Worker (design.md §8)
  * network-first для API Т-Инвестиций, cache-first для статики, офлайн-фолбэк на index.html */
 
-const CACHE_STATIC = 'forts-pilot-static-v1';
-const CACHE_RUNTIME = 'forts-pilot-runtime-v1';
+const CACHE_STATIC = 'forts-pilot-static-v2';
+const CACHE_RUNTIME = 'forts-pilot-runtime-v2';
 
 const API_HOSTS = [
   'invest-public-api.tbank.ru',
@@ -17,13 +17,15 @@ const PRECACHE = [
   './manifest.webmanifest',
   './logo.svg',
   './offline.svg',
-  './icon-192.png',
-  './icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_STATIC).then((cache) => cache.addAll(PRECACHE)).then(() => self.skipWaiting()),
+    caches
+      .open(CACHE_STATIC)
+      // по одному: отсутствие одного файла не должно валить всю установку
+      .then((cache) => Promise.allSettled(PRECACHE.map((p) => cache.add(p))))
+      .then(() => self.skipWaiting()),
   );
 });
 
