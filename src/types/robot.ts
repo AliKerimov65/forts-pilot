@@ -1,7 +1,7 @@
 // Типы торговых роботов (движок исполнения стратегий — отдельный агент, здесь только данные)
 
 /** Стратегия робота */
-export type RobotStrategy = 'grid' | 'signal';
+export type RobotStrategy = 'grid' | 'signal' | 'regime';
 
 /** Статус робота */
 export type RobotStatus = 'off' | 'running' | 'paused' | 'error';
@@ -32,8 +32,23 @@ export interface SignalParams {
   takeProfitPts?: number;
 }
 
+/** Параметры regime-стратегии (создание; расширенные настройки — RegimeConfig в lib/robots/config) */
+export interface RegimeParams {
+  /** Размер позиции в лотах (базовая нога) */
+  lots: number;
+  /** Максимальная суммарная позиция, лотов */
+  maxPositionLots: number;
+}
+
 /** Параметры робота (union по стратегии) */
-export type RobotParams = { strategy: 'grid'; grid: GridParams } | { strategy: 'signal'; signal: SignalParams };
+export type RobotParams =
+  | { strategy: 'grid'; grid: GridParams }
+  | { strategy: 'signal'; signal: SignalParams }
+  // regime: поле `signal` — обязательная оболочка совместимости: текущий UI-визард
+  // сужает «не grid» к форме signal (править UI нельзя). Движок читает только `regime`;
+  // UI-агент при создании regime-робота заполняет signal заглушкой {signalType:'regime',
+  // timeframe:'5m', lots} до появления нативного шага визарда.
+  | { strategy: 'regime'; regime: RegimeParams; signal: SignalParams };
 
 /** Статистика робота */
 export interface RobotStats {

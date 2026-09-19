@@ -29,7 +29,7 @@
 
 - `market.ts`: `InstrumentType='stock'|'future'|'etf'|'currency'|'bond'|'option'|'index'`; `Instrument {uid, figi, ticker, classCode, name, basicAsset, lot, currency, minPriceIncrement, type, apiTradeAvailable, tradable, buyAvailable?, sellAvailable?, shortEnabled?, forQualInvestor?, tradingStatus?, weekendFlag?, isin?, expirationDate?, marginBuy?, marginSell?}` (все классы инструментов Т-Инвестиций; **индексы: `tradable=false` — только котировки, ордера запрещены, UI обязан блокировать Buy/Sell**), `Candle {time(ms), open, high, low, close, volume, isComplete}`, `OrderBookLevel {price, quantity}`, `OrderBook {instrumentId, bids, asks, lastPrice, limitUp?, limitDown?, time}`, `Quote {instrumentId, price, delta, changePct?, time}`, `CandleInterval` (`CANDLE_INTERVAL_1_MIN|5_MIN|15_MIN|HOUR|DAY|WEEK`).
 - `trading.ts`: `Direction='long'|'short'`, `Position {instrumentId, figi?, ticker, name?, direction, lots, avgPrice, currentPrice, pnl, margin?}`, `OrderStatus='new'|'partially_filled'|'filled'|'cancelled'|'rejected'`, `Order {orderId, accountId, instrumentId, ticker, direction, lotsRequested, lotsExecuted, price?, orderType:'limit'|'market', status, time, message?}`, `Trade {id, orderId?, instrumentId, ticker, direction, lots, price, commission?, pnl?, source:'manual'|'robot', robotId?, robotName?, time}`, `JournalEventType='trade'|'order'|'sl'|'tp'|'robot'|'risk'|'system'`, `JournalEvent {id, type, text, amount?, robotId?, instrumentId?, time}`, `PortfolioSummary {totalAmount, cash, freeMargin, blockedMargin, dayPnl, dayPnlPct, expectedYieldPct?}`, `EquityPoint {time, equity, benchmark?}`.
-- `robot.ts`: `RobotStrategy='grid'|'signal'`, `RobotStatus='off'|'running'|'paused'|'error'`, `GridParams {upperBound, lowerBound, levels, lotsPerLevel}`, `SignalParams {signalType, timeframe, lots, stopLossPts?, takeProfitPts?}`, `RobotParams` (union по strategy), `RobotStats {dayPnl, totalPnl, trades, winRate(0..1), allocatedCapital, lastStartedAt?}`, `Robot {id, name, strategy, instrumentId, ticker, status, errorMessage?, params, stats, createdAt}`.
+- `robot.ts`: `RobotStrategy='grid'|'signal'|'regime'`, `RobotStatus='off'|'running'|'paused'|'error'`, `GridParams {upperBound, lowerBound, levels, lotsPerLevel}`, `SignalParams {signalType, timeframe, lots, stopLossPts?, takeProfitPts?}`, `RegimeParams {lots, maxPositionLots}`, `RobotParams` (union по strategy; вариант `regime` дополнительно несёт обязательное поле-оболочку `signal: SignalParams` — см. раздел про regime ниже), `RobotStats {dayPnl, totalPnl, trades, winRate(0..1), allocatedCapital, lastStartedAt?}`, `Robot {id, name, strategy, instrumentId, ticker, status, errorMessage?, params, stats, createdAt}`.
 - `account.ts`: `Account {id, name, type, status, openedDate?, accessLevel?}`, `AppMode='sandbox'|'live'`, `ConnectionStatus='online'|'offline'|'error'|'connecting'`.
 
 ## API-слой (`@/lib/tinvest/`)
@@ -91,6 +91,62 @@
 - Статусы/маржа/расписание: `mockGetTradingStatus(uid)`, `mockGetMarginAttributes()`, `mockGetTradingSchedules()`
 - Прочее: `mockGetPositions()`, `mockGetPortfolio()`, `mockGetEquitySeries('1D'|'1W'|'1M'|'3M'|'ALL')`, `mockGetTrades()`, `mockGetJournalEvents()`, `mockGetRobots()`, `seededRandom(seed)`.
 - Паттерн: `const useMock = !useConnectionStore(s => s.token)` → mock-функции вместо services.
+
+## Стратегия 'regime' — «Регламент MOEX · Hedge» (`@/lib/robots/`)
+
+Внутридневная стратегия по регламенту Мосбиржи: премаркет-анализ → вход на открытии →
+виртуальный хедж → контроль клирингов → TP/переоткрытие → принудительный флэт перед
+закрытием дня → margin guard. Полный конфиг живёт в ext-сторе (`getExtConfig(robot).regime`),
+рантайм — в памяти движка (не персистится).
+
+### Создание regime-робота (UI)
+```ts
+addRobot({
+  name, strategy: 'regime', instrumentId, ticker,
+  params: {
+    strategy: 'regime',
+    regime: { lots: 2, maxPositionLots: 6 },
+    // обязательная оболочка совместимости с текущим визардом (движок regime её не читает):
+    signal: { signalType: 'regime', timeframe: '5m', lots: 2 },
+  },
+});
+useRobotsExtStore.getState().setConfig(robot.id, {
+  mode: 'sandbox', protection: defaultProtection(), regime: { ...DEFAULT_REGIME_CONFIG, ...overrides },
+});
+```
+Поля `RegimeConfig` (дефолты): `entryOffsetMin`(10) — за сколько мин до открытия премаркет-анализ;
+`flatBeforeCloseMinMin`(25)/`flatBeforeCloseMaxMin`(38) — окно принудительного флэта до конца
+основной сессии (момент выбирается раз в день, детерминированно по дате); `hedgeEnabled`(true),
+`baseHedgeRatio`(0.5); `clearingWatchMin`(5); `jumpZThreshold`(2.5); `takeProfitPts`(120, в шагах
+цены); `tpClosePct`(0.5); `reentryRetracePct`(0.3); `trailingEnabled`(true); `minConfidence`(0.55);
+`marginWarn/Reduce/Emergency`(0.55/0.70/0.82); `maxPositionLots`, `lots`.
+Русские подписи/описания полей — `REGIME_CONFIG_LABELS`, подписи фаз — `REGIME_PHASE_LABELS`
+(оба из `@/lib/robots/config`).
+
+### Регламент (`schedule.ts`)
+`getSessionPlan(exchange, date, api?)` — дефолт FORTS: основная 09:00–18:45 МСК (промклиринг
+14:00–14:05), вечерняя 19:05–23:50, сб/вс выходные; с боевым токеном уточняется через
+`getTradingSchedules` (кэш сутки). `getSessionPhase(now, plan)` → `{phase: 'pre_open'|'main'|
+'clearing_day'|'clearing_evening'|'evening'|'closed', nextEventAt, msToNext, sessionOpen, dayClose}`.
+
+### Хедж-неттинг
+Позиция — виртуальные ноги `{longLots, shortLots, avgLong, avgShort}`; Т-Инвест неттинговый,
+поэтому в API уходит только изменение НЕТТО (buy/sell на дельту). Если ноги сбалансированы —
+реальный ордер не нужен и не выставляется.
+
+### Margin guard (`marginGuard.ts`)
+`assessMargin(attrs, cfg)` → `{utilization 0..1, level: 'ok'|'warn'|'reduce'|'emergency', freeMargin}`;
+`reduce` — запрет входов + сокращение нетто; `emergency` — полный флэт, робот → `paused`,
+события в risk-стор (`kind:'margin'`) и ленту (`type:'risk'`). Демо — `demoMarginAttributes(utilization)`.
+
+### Статус для UI (`engine.ts`)
+`getRegimeStatus(robotId): RegimeStatusSnapshot | undefined` — `{state, legs, netLots, sessionPhase,
+nextEventAt, msToNext, flatAt, sessionOpen, dayClose, direction, confidence, marginLevel,
+marginUtilization, unrealizedPts, lastJump, lastEventText}`. Использовать для бейджа фазы
+(`REGIME_PHASE_LABELS[state]`), обратного отсчёта до события регламента (`msToNext`) и блока ног.
+`getRobotExposure(robot)` для regime возвращает строку вида `нетто +1 лот (L2/S1)`.
+События стратегии (анализ, вход, TP, переоткрытие, клиринг-скачки, флэт) пишутся в ленту
+журнала (`type:'robot'`).
 
 ## Сторы (zustand, persist в localStorage)
 

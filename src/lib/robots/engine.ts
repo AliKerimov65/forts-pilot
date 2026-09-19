@@ -12,8 +12,8 @@ import { useMarketStore } from '@/store/market';
 import { useRiskStore } from '@/store/risk';
 import { useRobotsStore } from '@/store/robots';
 import { useTradingStore } from '@/store/trading';
-import { getCandles, getLastPrices, postOrder } from '@/lib/tinvest/services';
-import { mockGetCandles, mockGetLastPrices } from '@/lib/tinvest/mock';
+import { getCandles, getFuturesMargin, getLastPrices, getMarginAttributes, getOrderBook, getTradingSchedules, postOrder } from '@/lib/tinvest/services';
+import { mockGetCandles, mockGetLastPrices, mockGetOrderBook } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS } from '@/lib/tinvest/polling';
 import { formatRub } from '@/lib/format';
 import { getExtConfig } from './config';
@@ -27,14 +27,28 @@ import {
   timeframeToMs,
   type SignalRuntime,
 } from './signal';
+import { getSessionPhase, getSessionPlan } from './schedule';
+import { assessMargin, demoMarginAttributes, maxLotsByMargin } from './marginGuard';
+import {
+  getRegimeSnapshot,
+  initRegimeRuntime,
+  regimeTick,
+  type RegimeRuntime,
+  type RegimeStatusSnapshot,
+} from './regime';
 
 const CANDLES_REFRESH_MS = 60_000;
 const CANDLES_COUNT = 120;
+/** Троттлинг запросов стакана/маржи/ГО для regime-роботов */
+const REGIME_BOOK_REFRESH_MS = 10_000;
+const REGIME_MARGIN_REFRESH_MS = 30_000;
+const REGIME_IM_REFRESH_MS = 300_000;
 
 // ---------- рантайм-состояние движка (не персистится) ----------
 
 const gridRuntimes = new Map<string, GridRuntime>();
 const signalRuntimes = new Map<string, SignalRuntime>();
+const regimeRuntimes = new Map<string, RegimeRuntime>();
 const candlesCache = new Map<string, { fetchedAt: number; candles: Candle[] }>();
 
 interface DayCounters {
@@ -69,6 +83,7 @@ export function stopRobotsEngine(): void {
 export function resetRobotRuntime(robotId: string): void {
   gridRuntimes.delete(robotId);
   signalRuntimes.delete(robotId);
+  regimeRuntimes.delete(robotId);
   counters.delete(robotId);
 }
 
@@ -81,6 +96,15 @@ export function getRobotExposure(robot: Robot): string {
     return rt.positionLots > 0
       ? `в позиции ${rt.positionLots} лот · ${active} ур.`
       : `${rt.levels.length} уровней, вне позиции`;
+  }
+  if (robot.strategy === 'regime') {
+    const rt = regimeRuntimes.get(robot.id);
+    if (!rt) return 'ожидание регламента';
+    const net = rt.legs.longLots - rt.legs.shortLots;
+    const hedge = rt.legs.longLots > 0 && rt.legs.shortLots > 0;
+    return net !== 0 || hedge
+      ? `нетто ${net > 0 ? '+' : ''}${net} лот (L${rt.legs.longLots}/S${rt.legs.shortLots})`
+      : 'вне позиции';
   }
   const rt = signalRuntimes.get(robot.id);
   if (rt?.position) {
@@ -97,6 +121,12 @@ export function getGridRuntime(robotId: string): GridRuntime | undefined {
 /** Позиция сигнального робота для мини-графика (UI) */
 export function getSignalRuntime(robotId: string): SignalRuntime | undefined {
   return signalRuntimes.get(robotId);
+}
+
+/** Снапшот состояния regime-робота для UI (фаза, отсчёт до события регламента, ноги) */
+export function getRegimeStatus(robotId: string): RegimeStatusSnapshot | undefined {
+  const rt = regimeRuntimes.get(robotId);
+  return rt ? getRegimeSnapshot(rt) : undefined;
 }
 
 // ---------- цикл ----------
@@ -120,6 +150,7 @@ async function tickInner(): Promise<void> {
   const aliveIds = new Set(robotsStore.robots.map((r) => r.id));
   for (const [id] of gridRuntimes) if (!aliveIds.has(id)) gridRuntimes.delete(id);
   for (const [id] of signalRuntimes) if (!aliveIds.has(id)) signalRuntimes.delete(id);
+  for (const [id] of regimeRuntimes) if (!aliveIds.has(id)) regimeRuntimes.delete(id);
   for (const [id] of counters) if (!aliveIds.has(id)) counters.delete(id);
 
   // --- Дневной стоп риск-менеджмента: остановка всех роботов ---
@@ -165,6 +196,7 @@ async function tickInner(): Promise<void> {
     if (!price || price <= 0) continue;
     try {
       if (robot.strategy === 'grid') await tickGridRobot(robot, price, useMock);
+      else if (robot.strategy === 'regime') await tickRegimeRobot(robot, price, useMock);
       else await tickSignalRobot(robot, price, useMock);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Ошибка исполнения';
@@ -286,6 +318,154 @@ async function tickSignalRobot(robot: Robot, price: number, useMock: boolean): P
         rt.position = { direction: entry.direction, lots: entry.lots, entryPrice: executed };
       }
     }
+  }
+}
+
+// ---------- regime (Регламент MOEX · Hedge) ----------
+
+/** 1-мин свечи для regime (кэш 60с, общий candlesCache) */
+async function ensureRegimeCandles(instrumentId: string, useMock: boolean): Promise<Candle[]> {
+  const key = `${instrumentId}:CANDLE_INTERVAL_1_MIN`;
+  const cached = candlesCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt <= CANDLES_REFRESH_MS) return cached.candles;
+  const to = new Date();
+  const from = new Date(to.getTime() - CANDLES_COUNT * 60_000);
+  const candles = useMock
+    ? mockGetCandles(instrumentId, 'CANDLE_INTERVAL_1_MIN', CANDLES_COUNT)
+    : await getCandles(instrumentId, from, to, 'CANDLE_INTERVAL_1_MIN', CANDLES_COUNT);
+  candlesCache.set(key, { fetchedAt: Date.now(), candles });
+  return candles;
+}
+
+async function tickRegimeRobot(robot: Robot, price: number, useMock: boolean): Promise<void> {
+  if (robot.params.strategy !== 'regime') return;
+  const cfg = getExtConfig(robot).regime!;
+  const now = new Date();
+
+  let rt = regimeRuntimes.get(robot.id);
+  if (!rt) {
+    rt = initRegimeRuntime();
+    regimeRuntimes.set(robot.id, rt);
+  }
+
+  // План сессий: боевой токен → getTradingSchedules (кэш сутки внутри schedule), демо → дефолт FORTS
+  const plan = await getSessionPlan(
+    'MOEX',
+    now,
+    useMock ? undefined : (exchange, from, to) => getTradingSchedules(from, to, exchange),
+  );
+  const phase = getSessionPhase(now, plan);
+
+  // Свечи 1-мин (ATR, всплеск объёма) — ошибка свечей не критична
+  let candles: Candle[] = [];
+  try {
+    candles = await ensureRegimeCandles(robot.instrumentId, useMock);
+  } catch {
+    candles = [];
+  }
+
+  // Дисбаланс стакана (троттлинг 10с; ошибка → NaN «нет данных»)
+  if (now.getTime() - rt.cacheBookAt >= REGIME_BOOK_REFRESH_MS) {
+    rt.cacheBookAt = now.getTime();
+    try {
+      const book = useMock ? mockGetOrderBook(robot.instrumentId, 10) : await getOrderBook(robot.instrumentId, 10);
+      const bidVol = book.bids.reduce((a, b) => a + b.quantity, 0);
+      const askVol = book.asks.reduce((a, b) => a + b.quantity, 0);
+      rt.cacheImbalance = bidVol + askVol > 0 ? bidVol / (bidVol + askVol) : NaN;
+    } catch {
+      rt.cacheImbalance = NaN;
+    }
+  }
+
+  // Маржа счёта (троттлинг 30с; демо → mock-атрибуты; ошибка → предыдущее значение)
+  if (now.getTime() - rt.cacheMarginAt >= REGIME_MARGIN_REFRESH_MS || !rt.cacheMargin) {
+    rt.cacheMarginAt = now.getTime();
+    try {
+      const attrs = useMock ? demoMarginAttributes(0.35) : await getMarginAttributes();
+      rt.cacheMargin = assessMargin(attrs, {
+        warn: cfg.marginWarn,
+        reduce: cfg.marginReduce,
+        emergency: cfg.marginEmergency,
+      });
+    } catch {
+      rt.cacheMargin = rt.cacheMargin ?? assessMargin(demoMarginAttributes(0.35), {
+        warn: cfg.marginWarn,
+        reduce: cfg.marginReduce,
+        emergency: cfg.marginEmergency,
+      });
+    }
+  }
+
+  // ГО на лот (троттлинг 5 мин; демо/ошибка → оценка 15% от цены)
+  if (now.getTime() - rt.cacheImPerLotAt >= REGIME_IM_REFRESH_MS || rt.cacheImPerLot <= 0) {
+    rt.cacheImPerLotAt = now.getTime();
+    if (!useMock) {
+      try {
+        const m = await getFuturesMargin(robot.instrumentId);
+        rt.cacheImPerLot = Math.max(m.buy, m.sell);
+      } catch {
+        rt.cacheImPerLot = price * 0.15;
+      }
+    } else {
+      rt.cacheImPerLot = price * 0.15;
+    }
+  }
+
+  // Шаг цены инструмента (для takeProfitPts)
+  const instrument = useMarketStore.getState().instruments.find((i) => i.uid === robot.instrumentId);
+  const priceStep = instrument?.minPriceIncrement ?? 1;
+
+  const margin = rt.cacheMargin!;
+  const result = regimeTick(
+    rt,
+    {
+      now,
+      price,
+      priceStep,
+      plan,
+      phase,
+      candles,
+      orderBookImbalance: rt.cacheImbalance,
+      margin,
+      marginLotsCap: maxLotsByMargin(margin.freeMargin, rt.cacheImPerLot, 0.8),
+    },
+    cfg,
+  );
+
+  // События стратегии → лента журнала
+  for (const text of result.events) {
+    useTradingStore.getState().addEvent({
+      type: 'robot',
+      text: `«${robot.name}»: ${text}`,
+      robotId: robot.id,
+      instrumentId: robot.instrumentId,
+    });
+  }
+
+  // Исполнение нетто-ордеров (идемпотентность: флаг pendingOrder на время исполнения)
+  rt.pendingOrder = true;
+  try {
+    for (const action of result.actions) {
+      if (countersExceeded(robot)) break;
+      await executeRobotTrade(robot, action.direction, action.lots, price, useMock, action.pnl, action.reason);
+    }
+  } finally {
+    rt.pendingOrder = false;
+  }
+
+  // Аварийный стоп по марже: полный флэт уже выставлен, останавливаем робота
+  if (result.emergencyStop) {
+    useRobotsStore.getState().setStatus(robot.id, 'paused', 'Аварийный стоп: критическая загрузка маржи');
+    useRiskStore.getState().addEvent({
+      kind: 'margin',
+      text: `«${robot.name}» остановлен: утилизация маржи ${(margin.utilization * 100).toFixed(0)}% — аварийный флэт`,
+    });
+    useTradingStore.getState().addEvent({
+      type: 'risk',
+      text: `«${robot.name}»: аварийный стоп по марже (emergency)`,
+      robotId: robot.id,
+      instrumentId: robot.instrumentId,
+    });
   }
 }
 
