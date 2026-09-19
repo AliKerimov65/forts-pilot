@@ -315,7 +315,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
           >
             <motion.div
               className={cn(
-                'absolute inset-x-0 bottom-0 top-[8dvh] flex flex-col overflow-hidden rounded-t-2xl border border-subtle bg-panel',
+                // v2 §2.1: drawer — уровень L3 (bg-overlay + border-strong + shadow-overlay)
+                'absolute inset-x-0 bottom-0 top-[8dvh] flex flex-col overflow-hidden rounded-t-2xl border border-strong bg-overlay shadow-overlay',
                 'sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[560px] sm:rounded-none sm:border-y-0 sm:border-r-0',
               )}
               initial={{ opacity: 0, x: 0, y: 60 }}
@@ -327,11 +328,18 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
               {/* Ручка sheet (mobile) */}
               <div className="mx-auto mt-2 h-1 w-8 rounded-full bg-fg-muted/40 sm:hidden" />
 
-              {/* Шапка */}
+              {/* Шапка (v2 §5.3.6: подпись текущего шага под заголовком) */}
               <div className="flex items-center gap-3 border-b border-subtle px-5 py-4">
-                <h2 className="flex-1 text-lg font-bold text-fg">
-                  {editRobot ? 'Редактирование робота' : 'Новый робот'}
-                </h2>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-bold text-fg">
+                    {editRobot ? 'Редактирование робота' : 'Новый робот'}
+                  </h2>
+                  {!done && (
+                    <p className="mt-0.5 text-xs leading-4 text-fg-muted">
+                      Шаг <span className="mono">{step + 1}</span> из <span className="mono">3</span> — {STEPS[step]}
+                    </p>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => onOpenChange(false)}
@@ -483,8 +491,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
                     </AnimatePresence>
                   </div>
 
-                  {/* Футер навигации */}
-                  <div className="flex gap-2 border-t border-subtle px-5 py-4">
+                  {/* Футер навигации — закреплён внизу drawer (v2 §5.3.6: bg-overlay + рамка сверху) */}
+                  <div className="flex shrink-0 gap-2 border-t border-strong bg-overlay px-5 py-4">
                     {step > 0 ? (
                       <button
                         type="button"
@@ -789,19 +797,33 @@ function StepGrid(p: {
           <Stepper value={p.lotsPerLevel} onChange={p.setLotsPerLevel} min={1} max={10} />
         </div>
 
+        {/* v2 §5.3.7: живые расчёты — L0-inset карточка-резюме с mono-строками;
+            при выходе за маржу рамка border-short всей карточки */}
         <motion.div
           key={String(p.marginOk)}
           animate={p.marginOk ? {} : { x: [0, -6, 6, -4, 4, 0] }}
           transition={{ duration: 0.3 }}
           className={cn(
-            'rounded-lg border px-3 py-2.5 text-sm',
-            p.marginOk ? 'border-long/30 bg-long-dim text-long' : 'border-short/40 bg-short-dim text-short',
+            'space-y-1 rounded-lg border p-3 text-[13px] shadow-inset',
+            p.marginOk ? 'border-subtle bg-inset' : 'border-short bg-short-dim',
           )}
         >
-          Всего ГО при полной сетке: <span className="mono font-bold">≈ {formatRub(p.totalMargin, 0)}</span>
-          <span className={cn('mono ml-2 text-xs', p.marginOk ? 'text-fg-secondary' : 'text-short')}>
-            свободно {formatRub(p.freeMargin, 0)}
-          </span>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-fg-secondary">Всего ГО при полной сетке</span>
+            <span className={cn('mono font-bold', p.marginOk ? 'text-fg' : 'text-short')}>≈ {formatRub(p.totalMargin, 0)}</span>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-fg-secondary">Свободная маржа</span>
+            <span className={cn('mono text-xs', p.marginOk ? 'text-fg-secondary' : 'text-short')}>
+              {formatRub(p.freeMargin, 0)}
+            </span>
+          </div>
+          {!p.marginOk && (
+            <div className="flex items-center gap-1 pt-0.5 text-xs font-medium text-short">
+              <TriangleAlert className="h-3 w-3" />
+              Сетка не помещается в свободную маржу — уменьшите уровни или лоты
+            </div>
+          )}
         </motion.div>
 
         <label className="flex cursor-pointer items-center justify-between gap-3">

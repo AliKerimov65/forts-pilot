@@ -134,6 +134,23 @@ export interface PositionsTableProps {
   onOpenTerminal: () => void;
 }
 
+const HEADERS = ['Инструмент', 'Направление', 'Кол-во', 'Средняя', 'Текущая', 'Нереализ. P&L', 'SL', 'TP', 'Источник', ''];
+
+/** Шапка таблицы по v2 §2.3: 36px, caption 11px uppercase, числовые колонки вправо */
+function TableHead() {
+  return (
+    <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
+      <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">
+        {HEADERS.map((h, i) => (
+          <th key={i} className={cn('h-9 px-4 font-semibold', i >= 2 && i <= 7 && 'text-right')}>
+            {h}
+          </th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
 export default function PositionsTable(props: PositionsTableProps) {
   const { positions, onClose, onOpenSlTp, onOpenTerminal } = props;
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -146,17 +163,37 @@ export default function PositionsTable(props: PositionsTableProps) {
     [positions],
   );
 
+  const emptyBody = (
+    <EmptyState
+      compact
+      icon={<Shield className="h-7 w-7" />}
+      title="Открытых позиций нет"
+      subtitle="Запустите робота или откройте позицию в терминале"
+      actionLabel="Открыть терминал"
+      onAction={onOpenTerminal}
+    />
+  );
+
+  // v2 §5.4.8: пустое состояние — в теле таблицы (colSpan), шапка секции остаётся на месте
   if (positions.length === 0) {
     return (
-      <section className="rounded-xl border border-subtle bg-panel p-4 md:p-5">
-        <h3 className="text-sm font-semibold text-fg">Открытые позиции</h3>
-        <EmptyState
-          icon={<Shield className="h-7 w-7" />}
-          title="Открытых позиций нет"
-          subtitle="Запустите робота или откройте позицию в терминале"
-          actionLabel="Открыть терминал"
-          onAction={onOpenTerminal}
-        />
+      <section className="overflow-hidden rounded-xl border border-subtle bg-panel">
+        <div className="flex items-center justify-between px-4 pt-4 md:px-5">
+          <h3 className="text-sm font-semibold text-fg">
+            Открытые позиции <span className="mono text-fg-muted">(0)</span>
+          </h3>
+        </div>
+        <div className="md:hidden">{emptyBody}</div>
+        <div className="mt-2 hidden md:block">
+          <table className="w-full border-collapse text-sm">
+            <TableHead />
+            <tbody>
+              <tr>
+                <td colSpan={HEADERS.length}>{emptyBody}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     );
   }
@@ -247,20 +284,11 @@ export default function PositionsTable(props: PositionsTableProps) {
         })}
       </ul>
 
-      {/* ===== Desktop: таблица ===== */}
-      <div className="hidden overflow-x-auto md:block">
-        <table className="mt-2 w-full border-collapse text-sm">
-          <thead>
-            <tr className="text-left text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">
-              {['Инструмент', 'Направление', 'Кол-во', 'Средняя', 'Текущая', 'Нереализ. P&L', 'SL', 'TP', 'Источник', ''].map(
-                (h, i) => (
-                  <th key={i} className={cn('px-4 py-2 font-medium', i >= 2 && i <= 7 && 'text-right')}>
-                    {h}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
+      {/* ===== Desktop: таблица (v2 §2.3: sticky-заголовок 36px, zebra отменена в живой таблице,
+          собственный скролл, sticky-футер итогов) ===== */}
+      <div className="mt-2 hidden max-h-[520px] overflow-auto md:block">
+        <table className="w-full border-collapse text-sm">
+          <TableHead />
           <tbody>
             {positions.map((p, i) => {
               const expanded = expandedId === p.instrumentId;
@@ -273,10 +301,11 @@ export default function PositionsTable(props: PositionsTableProps) {
                   transition={{ delay: Math.min(i, 10) * 0.03, duration: 0.25 }}
                   onClick={() => setExpandedId(expanded ? null : p.instrumentId)}
                   className={cn(
-                    'h-10 cursor-pointer border-t border-subtle transition-colors hover:bg-panel-raised',
-                    i % 2 === 1 && 'bg-[rgba(255,255,255,0.02)]',
-                    pct <= -3 && 'shadow-[inset_3px_0_0_var(--short)]',
-                    pct >= 3 && 'shadow-[inset_3px_0_0_var(--long)]',
+                    'h-10 cursor-pointer border-t border-subtle/60 transition-colors duration-[120ms] hover:bg-panel-raised',
+                    // v2 §2.3: семантическая кромка по P&L; у раскрытой строки — жёлтая кромка поверх
+                    !expanded && pct <= -3 && 'shadow-[inset_3px_0_0_var(--short)]',
+                    !expanded && pct >= 3 && 'shadow-[inset_3px_0_0_var(--long)]',
+                    expanded && 'bg-panel-raised shadow-[inset_2px_0_0_var(--accent-yellow)]',
                   )}
                 >
                   <td className="px-4 py-2">
@@ -362,13 +391,21 @@ export default function PositionsTable(props: PositionsTableProps) {
           </tbody>
           <tfoot>
             <tr className="border-t border-strong text-[13px]">
-              <td className="px-4 py-2.5 text-xs font-medium uppercase tracking-[0.08em] text-fg-muted" colSpan={5}>
+              <td
+                className="sticky bottom-0 h-10 bg-panel-raised px-4 text-xs font-medium uppercase tracking-[0.08em] text-fg-muted"
+                colSpan={5}
+              >
                 Итого
               </td>
-              <td className={cn('mono px-4 py-2.5 text-right font-bold', totals.pnl >= 0 ? 'text-long' : 'text-short')}>
+              <td
+                className={cn(
+                  'mono sticky bottom-0 h-10 bg-panel-raised px-4 text-right font-semibold',
+                  totals.pnl >= 0 ? 'text-long' : 'text-short',
+                )}
+              >
                 {formatSignedRub(totals.pnl)}
               </td>
-              <td className="mono px-4 py-2.5 text-right text-fg-secondary" colSpan={4}>
+              <td className="mono sticky bottom-0 h-10 bg-panel-raised px-4 text-right text-fg-secondary" colSpan={4}>
                 ГО {formatRub(totals.margin, 0)}
               </td>
             </tr>

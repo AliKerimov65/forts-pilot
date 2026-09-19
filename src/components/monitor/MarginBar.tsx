@@ -2,11 +2,13 @@
 // загрузка депозита (прогресс-бар с делениями 50%/80% и цветовыми зонами), нереализ. P&L.
 // Mobile — сворачиваемая плашка «Маржа N%» с accordion-деталями.
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown } from 'lucide-react';
+import { ArrowUpRight, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatRub, formatSignedRub } from '@/lib/format';
 import PriceTicker from '@/components/PriceTicker';
+import { useRiskStore } from '@/store/risk';
 
 export interface MarginBarProps {
   totalAmount: number;
@@ -51,6 +53,7 @@ function MarginProgress({ pct, className }: { pct: number; className?: string })
 
 export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unrealizedPnl }: MarginBarProps) {
   const [open, setOpen] = useState(false);
+  const maxMarginPct = useRiskStore((s) => s.limits.maxMarginPct);
   const pct = totalAmount > 0 ? (blockedMargin / totalAmount) * 100 : 0;
   const zone = marginZone(pct);
 
@@ -99,6 +102,16 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
                 </div>
               ))}
             </div>
+            {/* v2 §5.4.2: порог из риск-настроек + переход на /risk */}
+            <Link
+              to="/risk"
+              className="mt-3 flex items-center justify-between rounded-lg px-1 py-1 text-[11px] text-fg-muted transition-colors hover:text-fg"
+            >
+              <span>
+                Лимит загрузки депозита: <span className="mono">{maxMarginPct}%</span> (риск-настройки)
+              </span>
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
           </motion.div>
         )}
       </AnimatePresence>
@@ -111,18 +124,22 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
             <div className="mono mt-1 truncate text-base font-bold text-fg">{c.value}</div>
           </div>
         ))}
-        <div className="min-w-0 flex-1 px-2">
+        {/* v2 §5.4.2: блок маржи — ссылка на /risk (hover-аффорданс), порог лимита подписью под баром */}
+        <Link to="/risk" className="group/margin min-w-0 flex-1 rounded-lg px-2 py-1 transition-colors hover:bg-panel-raised">
           <div className="flex items-baseline justify-between">
-            <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Загрузка депозита</span>
+            <span className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted transition-colors group-hover/margin:text-fg-secondary">
+              Загрузка депозита
+              <ArrowUpRight className="h-3 w-3 opacity-0 transition-opacity duration-150 group-hover/margin:opacity-100" />
+            </span>
             <span className={cn('mono text-sm font-bold', ZONE_TEXT[zone])}>{pct.toFixed(0)}%</span>
           </div>
           <MarginProgress pct={pct} className="mt-2" />
           <div className="mt-1 flex justify-between text-[10px] text-fg-muted">
-            <span className="invisible">0</span>
+            <span className="mono">лимит {maxMarginPct}%</span>
             <span className="mono">50%</span>
             <span className="mono">80%</span>
           </div>
-        </div>
+        </Link>
         <div className="min-w-0">
           <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Нереализованный P&L</div>
           <div className="mono mt-1 truncate text-base font-bold">{cells[3].value}</div>

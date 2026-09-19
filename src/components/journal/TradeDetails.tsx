@@ -58,10 +58,11 @@ function TradeMiniChart({ t }: { t: EnrichedTrade }) {
 }
 
 function DetailRow({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
+  // v2 §5.5.5: колонки label/значение 40%/60%
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-subtle/60 py-2 last:border-0">
+    <div className="grid grid-cols-[40%_60%] items-center gap-3 border-b border-subtle/60 py-2 last:border-0">
       <span className="text-xs text-fg-muted">{label}</span>
-      <span className={cn('mono text-[13px] text-fg', className)}>{value}</span>
+      <span className={cn('mono text-right text-[13px] text-fg', className)}>{value}</span>
     </div>
   );
 }
@@ -89,7 +90,7 @@ export default function TradeDetails({ trade, onOpenChange }: TradeDetailsProps)
     <Sheet open={trade !== null} onOpenChange={onOpenChange}>
       <SheetContent
         side={isMobile ? 'bottom' : 'right'}
-        className={cn('overflow-y-auto border-subtle bg-panel-raised', !isMobile && 'w-[420px] sm:max-w-[420px]')}
+        className={cn('overflow-y-auto border-strong bg-overlay shadow-overlay', !isMobile && 'w-[420px] sm:max-w-[420px]')}
       >
         {t && (
           <>

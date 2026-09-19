@@ -7,6 +7,7 @@ import { Bot, ChevronDown, Hand, ListFilter, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Badge from '@/components/Badge';
 import EmptyState from '@/components/EmptyState';
+import NavBadge from '@/components/NavBadge';
 import { formatNumber, formatTime } from '@/lib/format';
 import type { MonitorOrder, OrderKind } from './monitorData';
 import SwipeActionRow from './SwipeActionRow';
@@ -104,7 +105,7 @@ export default function OrdersSection({ orders, onCancel, cancellingIds }: Order
         animate={{ opacity: cancelling ? 0.4 : 1, y: 0 }}
         exit={{ opacity: 0, height: 0 }}
         transition={{ delay: Math.min(idx, 10) * 0.03, duration: 0.25 }}
-        className={cn('h-10 border-t border-subtle/60 transition-colors hover:bg-panel-raised', idx % 2 === 1 && 'bg-[rgba(255,255,255,0.02)]')}
+        className="h-10 border-t border-subtle/60 transition-colors duration-[120ms] hover:bg-panel-raised"
       >
         <td className="mono px-4 py-2 text-[12px] text-fg-muted">{formatTime(o.time)}</td>
         <td className="px-4 py-2">
@@ -208,15 +209,16 @@ export default function OrdersSection({ orders, onCancel, cancellingIds }: Order
                   transition={{ type: 'spring', stiffness: 400, damping: 32 }}
                 />
               )}
-              <span className="relative z-10">
-                {t.label}{' '}
+              <span className="relative z-10 inline-flex items-center gap-1.5">
+                {t.label}
+                {/* v2 §5.4.4: счётчики — бейджами mono 11px (NavBadge, единый источник стиля) */}
                 <motion.span
                   key={counts[t.value]}
                   initial={{ scale: 1.2 }}
                   animate={{ scale: 1 }}
-                  className="mono inline-block text-fg-muted"
+                  className="inline-flex"
                 >
-                  ({counts[t.value]})
+                  <NavBadge kind="count" count={counts[t.value]} variant="neutral" />
                 </motion.span>
               </span>
             </button>
@@ -241,11 +243,14 @@ export default function OrdersSection({ orders, onCancel, cancellingIds }: Order
                   <button
                     type="button"
                     onClick={() => toggleGroup(name)}
-                    className="mb-2 flex w-full items-center gap-2 px-1 text-xs font-semibold text-yellow"
+                    className="mb-2 flex h-8 w-full items-center gap-2 rounded-lg bg-panel-raised px-2 text-xs font-semibold text-yellow"
                   >
                     <Bot className="h-3.5 w-3.5" />
                     {name} — {arr.length} орд.
                     <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', collapsed.has(name) && '-rotate-90')} />
+                    <span className="mono ml-auto text-[11px] font-medium text-fg-secondary">
+                      Σ {arr.reduce((a, o) => a + o.lotsRequested, 0)} лот
+                    </span>
                   </button>
                   <AnimatePresence initial={false}>
                     {!collapsed.has(name) && (
@@ -266,13 +271,13 @@ export default function OrdersSection({ orders, onCancel, cancellingIds }: Order
             </AnimatePresence>
           </ul>
 
-          {/* Desktop: таблица */}
-          <div className="hidden overflow-x-auto md:block">
-            <table className="mt-2 w-full border-collapse text-sm">
-              <thead>
-                <tr className="text-left text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">
+          {/* Desktop: таблица (v2 §2.3: sticky-заголовок 36px, без zebra — живая таблица) */}
+          <div className="mt-2 hidden max-h-[520px] overflow-auto md:block">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
+                <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">
                   {['Время', 'Инструмент', 'Тип', 'Направление', 'Цена', 'Лоты', 'Статус', 'Источник', ''].map((h, i) => (
-                    <th key={i} className={cn('px-4 py-2 font-medium', (i === 4 || i === 5 || i === 8) && 'text-right')}>
+                    <th key={i} className={cn('h-9 px-4 font-semibold', (i === 4 || i === 5 || i === 8) && 'text-right')}>
                       {h}
                     </th>
                   ))}
@@ -281,18 +286,22 @@ export default function OrdersSection({ orders, onCancel, cancellingIds }: Order
               <tbody>
                 <AnimatePresence initial={false}>
                   {groups.robotGroups.map(([name, arr]) => [
+                    // v2 §5.4.4: заголовок группы 32px bg-panel-raised + mono-сводка справа
                     <tr key={name} className="border-t border-subtle">
-                      <td colSpan={9} className="px-4 py-1.5">
+                      <td colSpan={9} className="bg-panel-raised px-4 py-0">
                         <button
                           type="button"
                           onClick={() => toggleGroup(name)}
-                          className="flex items-center gap-2 text-xs font-semibold text-yellow"
+                          className="flex h-8 w-full items-center gap-2 text-xs font-semibold text-yellow"
                         >
                           <Bot className="h-3.5 w-3.5" />
                           {name} — {arr.length} орд.
                           <ChevronDown
                             className={cn('h-3.5 w-3.5 transition-transform', collapsed.has(name) && '-rotate-90')}
                           />
+                          <span className="mono ml-auto text-[11px] font-medium text-fg-secondary">
+                            Σ {arr.reduce((a, o) => a + o.lotsRequested, 0)} лот
+                          </span>
                         </button>
                       </td>
                     </tr>,

@@ -24,6 +24,7 @@ import {
 import { POLLING_DEFAULTS, usePolling } from '@/lib/tinvest/polling';
 import { formatNumber, formatSignedRub, formatTime } from '@/lib/format';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
+import PageHeader from '@/components/PageHeader';
 import MarginBar from '@/components/monitor/MarginBar';
 import PositionsTable from '@/components/monitor/PositionsTable';
 import OrdersSection from '@/components/monitor/OrdersSection';
@@ -421,59 +422,66 @@ export default function Positions() {
 
   // ===== render =====
   const header = (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-[22px] font-extrabold leading-7 tracking-[-0.02em] text-fg md:text-[28px] md:leading-[34px]">
-          Позиции и ордера
-        </h1>
-        <p className="mt-1 flex items-center gap-2 text-xs font-medium text-fg-secondary">
-          <span className={cn('h-2 w-2 rounded-full', offline ? 'animate-pulse bg-warn' : 'pulse-dot bg-long')} />
-          {lastUpdated ? `Обновлено ${formatTime(lastUpdated)}` : 'Загрузка…'}
+    <PageHeader
+      group="Торговля"
+      title="Позиции и ордера"
+      subtitle={
+        <span className="flex items-center gap-2">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', offline ? 'animate-pulse bg-warn' : 'pulse-dot bg-long')} />
+          {lastUpdated ? (
+            <>
+              Обновлено <span className="mono">{formatTime(lastUpdated)}</span>
+            </>
+          ) : (
+            'Загрузка…'
+          )}
           <span className="text-fg-muted">·</span>
           <span className={offline ? 'text-warn' : 'text-long'}>{offline ? 'переподключение…' : 'поток активен'}</span>
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        {/* Фильтр источника */}
-        <div className="flex rounded-[10px] bg-inset p-0.5">
-          {(
-            [
-              ['all', 'Все'],
-              ['robot', 'Роботы'],
-              ['manual', 'Ручные'],
-            ] as [SourceFilter, string][]
-          ).map(([v, label]) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setSourceFilter(v)}
-              className={cn(
-                'relative rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
-                sourceFilter === v ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
-              )}
-            >
-              {sourceFilter === v && (
-                <motion.span
-                  layoutId="src-filter"
-                  className="absolute inset-0 rounded-lg border-b-2 border-yellow bg-panel-raised"
-                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                />
-              )}
-              <span className="relative z-10">{label}</span>
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setCloseAllOpen(true)}
-          disabled={positions.length === 0 && monitorOrders.length === 0}
-          className="hidden h-9 items-center gap-2 rounded-[10px] border border-short px-3.5 text-sm font-semibold text-short transition-colors hover:bg-short-dim disabled:opacity-40 md:flex"
-        >
-          <CircleX className="h-4 w-4" />
-          Закрыть все позиции
-        </button>
-      </div>
-    </div>
+        </span>
+      }
+      actions={
+        <>
+          {/* Фильтр источника */}
+          <div className="flex rounded-[10px] bg-inset p-0.5">
+            {(
+              [
+                ['all', 'Все'],
+                ['robot', 'Роботы'],
+                ['manual', 'Ручные'],
+              ] as [SourceFilter, string][]
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setSourceFilter(v)}
+                className={cn(
+                  'relative rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
+                  sourceFilter === v ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
+                )}
+              >
+                {sourceFilter === v && (
+                  <motion.span
+                    layoutId="src-filter"
+                    className="absolute inset-0 rounded-lg border-b-2 border-yellow bg-panel-raised"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative z-10">{label}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setCloseAllOpen(true)}
+            disabled={positions.length === 0 && monitorOrders.length === 0}
+            className="hidden h-10 items-center gap-2 rounded-[10px] border border-short/50 px-4 text-sm font-semibold text-short transition-colors hover:border-short hover:bg-short-dim disabled:opacity-45 md:flex"
+          >
+            <CircleX className="h-4 w-4" />
+            Закрыть все позиции
+          </button>
+        </>
+      }
+    />
   );
 
   const marginBar = (
@@ -509,18 +517,19 @@ export default function Positions() {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="space-y-4"
+      className="space-y-4 lg:space-y-5"
     >
       {header}
 
-      {/* Баннер потери стрима */}
+      {/* Баннер потери стрима (v2 §2.5.3: 40px, warn-гамма для переподключения) */}
       {offline && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-2 rounded-[10px] border border-yellow/40 bg-yellow-glow px-4 py-2.5 text-sm font-medium text-yellow"
+          transition={{ duration: 0.2 }}
+          className="flex h-10 items-center gap-2 rounded-[10px] border border-warn/40 bg-[rgba(245,165,36,0.1)] px-4 text-[13px] font-medium text-warn"
         >
-          <span className="h-2 w-2 animate-pulse rounded-full bg-yellow" />
+          <span className="h-2 w-2 animate-pulse rounded-full bg-warn" />
           Потеряно соединение с потоком — переподключение…
         </motion.div>
       )}
@@ -528,12 +537,12 @@ export default function Positions() {
       {marginBar}
 
       {/* ===== Desktop: сетка 8/4 ===== */}
-      <div className="hidden gap-4 lg:grid lg:grid-cols-12">
-        <div className="col-span-8 space-y-4">
+      <div className="hidden gap-5 lg:grid lg:grid-cols-12">
+        <div className="col-span-8 space-y-5">
           {positionsSection}
           {ordersSection}
         </div>
-        <div className="col-span-4 space-y-4">
+        <div className="col-span-4 space-y-5">
           <RiskMap positions={positions} tradesToday={tradesToday} />
           {feedSection}
         </div>
@@ -589,16 +598,19 @@ export default function Positions() {
         {mobileTab === 'feed' && feedSection}
       </div>
 
-      {/* FAB «Закрыть всё» (mobile, только при наличии позиций) */}
+      {/* FAB «Закрыть всё» (mobile, extended: иконка + подпись; spring-появление 0→≥1 позиций, v2 §5.4.7) */}
       {positions.length > 0 && (
-        <button
+        <motion.button
           type="button"
           onClick={() => setCloseAllOpen(true)}
-          className="fixed bottom-[88px] right-4 z-30 flex h-12 items-center gap-2 rounded-full bg-short px-4 text-sm font-bold text-white shadow-lg shadow-black/50 transition-transform active:scale-95 md:hidden"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 24 }}
+          className="fixed bottom-[92px] right-4 z-30 flex h-12 items-center gap-2 rounded-full bg-short px-4 text-sm font-bold text-white shadow-lg shadow-black/50 transition-transform active:scale-95 md:hidden"
         >
           <CircleX className="h-5 w-5" />
           Закрыть всё
-        </button>
+        </motion.button>
       )}
 
       {/* Подтверждение закрытия одной позиции */}
