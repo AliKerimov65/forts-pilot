@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 export interface SegmentOption<T extends string> {
   value: T;
   label: ReactNode;
+  /** Недоступная опция (напр. шорт для инструмента без shortEnabled) */
+  disabled?: boolean;
 }
 
 export function SegmentedControl<T extends string>({
@@ -38,10 +40,12 @@ export function SegmentedControl<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(opt.value)}
+            disabled={opt.disabled}
             className={cn(
               'relative flex-1 rounded-lg font-medium transition-colors',
               size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm',
               active ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
+              opt.disabled && 'cursor-not-allowed opacity-40 hover:text-fg-muted',
             )}
           >
             {active && (

@@ -14,6 +14,9 @@ import { useTradingStore } from '@/store/trading';
 import { useRobotsStore } from '@/store/robots';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { mockGetCandles, mockGetRobots } from '@/lib/tinvest/mock';
+import { formatInstrumentPrice, instrumentTypeLabel } from '@/lib/tinvest/instruments';
+import { findInstrumentMeta } from '@/components/dashboard/instrumentMeta';
+import type { InstrumentType } from '@/types/market';
 import { formatNumber, formatPct, formatRelative, formatRub, formatSignedRub } from '@/lib/format';
 import type { JournalEventType } from '@/types/trading';
 import StatCard from '@/components/StatCard';
@@ -27,6 +30,16 @@ import NavBadge from '@/components/NavBadge';
 type EquityPeriod = '1D' | '1W' | '1M' | '3M' | 'ALL';
 const PERIOD_LABELS: Record<EquityPeriod, string> = { '1D': '1Д', '1W': '1Н', '1M': '1М', '3M': '3М', ALL: 'Всё' };
 const DONUT_COLORS = ['#FFDD2D', '#16C784', '#3B82F6', '#5B6472'];
+
+/** Фильтр-чипы watchlist по классам инструментов (все классы Т-Инвестиций) */
+type WatchFilter = 'all' | Extract<InstrumentType, 'stock' | 'future' | 'index' | 'etf'>;
+const WATCH_FILTERS: Array<[WatchFilter, string]> = [
+  ['all', 'Все'],
+  ['stock', 'Акции'],
+  ['future', 'Фьючерсы'],
+  ['index', 'Индексы'],
+  ['etf', 'ETF'],
+];
 
 /** SegmentedControl периодов (design.md §5) */
 function SegmentedControl<T extends string>({
@@ -109,6 +122,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { refresh } = useDashboardData();
   const [period, setPeriod] = useState<EquityPeriod>('1D');
+  const [watchFilter, setWatchFilter] = useState<WatchFilter>('all');
 
   const account = useConnectionStore((s) => s.accounts.find((a) => a.id === s.accountId));
   const mode = useConnectionStore((s) => s.mode);
@@ -152,6 +166,12 @@ export default function Dashboard() {
   const equityData = useMemo(() => equity[period] ?? [], [equity, period]);
   const equityUp = equityData.length > 1 ? equityData[equityData.length - 1].equity >= equityData[0].equity : true;
   const pnlSparkline = useMemo(() => (equity['1D'] ?? []).map((p) => p.equity), [equity]);
+
+  // Watchlist: все классы, фильтр-чипы по типу инструмента
+  const watchlist = useMemo(
+    () => instruments.filter((i) => watchFilter === 'all' || i.type === watchFilter),
+    [instruments, watchFilter],
+  );
 
   const { winRate, profitFactor, tradesCount } = useMemo(() => {
     const closed = trades.filter((t) => t.pnl !== undefined);
@@ -584,20 +604,30 @@ export default function Dashboard() {
             />
           ) : (
             <div className="mt-2 flex-1 divide-y divide-subtle">
-              {positions.slice(0, 4).map((p) => (
-                <div key={p.instrumentId} className="flex items-center gap-3 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="mono text-[13px] font-semibold uppercase text-fg">{p.ticker}</div>
-                    <Badge variant={p.direction === 'long' ? 'long' : 'short'} className="mt-1">
-                      {p.direction === 'long' ? 'Лонг' : 'Шорт'}
-                    </Badge>
+              {positions.slice(0, 4).map((p) => {
+                const posType = findInstrumentMeta(p.instrumentId)?.type;
+                return (
+                  <div key={p.instrumentId} className="flex items-center gap-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="mono text-[13px] font-semibold uppercase text-fg">{p.ticker}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <Badge variant={p.direction === 'long' ? 'long' : 'short'}>
+                          {p.direction === 'long' ? 'Лонг' : 'Шорт'}
+                        </Badge>
+                        {posType && (
+                          <Badge variant="neutral" size="compact">
+                            {instrumentTypeLabel(posType)}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <span className="mono text-xs text-fg-secondary">{p.lots} лот{p.lots > 1 ? 'а' : ''}</span>
+                    <span className={cn('mono w-24 text-right text-[13px] font-medium', p.pnl >= 0 ? 'text-long' : 'text-short')}>
+                      <PriceTicker value={p.pnl} format={(v) => formatSignedRub(v)} delta={p.pnl} />
+                    </span>
                   </div>
-                  <span className="mono text-xs text-fg-secondary">{p.lots} лот{p.lots > 1 ? 'а' : ''}</span>
-                  <span className={cn('mono w-24 text-right text-[13px] font-medium', p.pnl >= 0 ? 'text-long' : 'text-short')}>
-                    <PriceTicker value={p.pnl} format={(v) => formatSignedRub(v)} delta={p.pnl} />
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           <button
@@ -645,11 +675,39 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Рынок FORTS (watchlist) */}
+        {/* Рынок (watchlist: все классы — акции, фьючерсы, индексы, ETF) */}
         <div className="rounded-xl border border-subtle bg-panel p-4 md:p-5">
-          <h2 className="text-base font-semibold text-fg">Рынок FORTS</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-fg">Рынок</h2>
+          </div>
+          {/* Фильтр-чипы по классам */}
+          <div className="mt-2 flex flex-wrap gap-1.5" role="tablist" aria-label="Класс инструментов">
+            {WATCH_FILTERS.map(([v, label]) => {
+              const activeChip = watchFilter === v;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeChip}
+                  onClick={() => setWatchFilter(v)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors duration-[120ms]',
+                    activeChip
+                      ? 'border-yellow/50 bg-yellow-glow text-yellow'
+                      : 'border-subtle text-fg-muted hover:border-strong hover:text-fg-secondary',
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="mt-2 space-y-0.5">
-            {instruments.slice(0, 6).map((ins) => {
+            {watchlist.length === 0 && (
+              <div className="py-4 text-center text-xs text-fg-muted">Нет инструментов этого класса в watchlist</div>
+            )}
+            {watchlist.slice(0, 7).map((ins) => {
               const q = quotes[ins.uid];
               const spark = mockGetCandles(ins.uid, 'CANDLE_INTERVAL_5_MIN', 20).map((c) => c.close);
               const pct = q?.changePct ?? 0;
@@ -667,8 +725,16 @@ export default function Dashboard() {
                   )}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="mono text-[13px] font-semibold uppercase text-fg">{ins.ticker}</div>
-                    <div className="truncate text-[11px] text-fg-muted">{ins.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="mono text-[13px] font-semibold uppercase text-fg">{ins.ticker}</span>
+                      <Badge variant={ins.type === 'index' ? 'info' : 'neutral'} size="compact">
+                        {instrumentTypeLabel(ins.type)}
+                      </Badge>
+                    </div>
+                    <div className="truncate text-[11px] text-fg-muted">
+                      {ins.name}
+                      {ins.type === 'index' && ' · только котировки'}
+                    </div>
                   </div>
                   <Sparkline data={spark} width={60} height={20} positive={pct >= 0} />
                   <div className="w-24 text-right">
@@ -677,7 +743,7 @@ export default function Dashboard() {
                         <PriceTicker
                           value={q.price}
                           delta={q.delta}
-                          format={(v) => formatNumber(v, ins.minPriceIncrement < 1 ? 2 : 0)}
+                          format={(v) => formatInstrumentPrice(ins, v)}
                         />
                       ) : (
                         '—'

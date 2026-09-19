@@ -9,8 +9,10 @@ import { Activity, ArrowLeft, ArrowRight, Grid3x3, TriangleAlert, X } from 'luci
 import type { Instrument } from '@/types/market';
 import type { Robot, RobotParams, RobotStrategy } from '@/types/robot';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
+import Badge from '@/components/Badge';
 import { cn } from '@/lib/utils';
 import { formatNumber, formatRub } from '@/lib/format';
+import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
 import { useRobotsStore } from '@/store/robots';
 import { useRiskStore } from '@/store/risk';
 import { useTradingStore } from '@/store/trading';
@@ -177,6 +179,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
   const onInstrument = (ins: Instrument, lastPrice: number | null) => {
     setInstrument(ins);
     setPrice(lastPrice);
+    // Шорт запрещён по инструменту (shortEnabled=false) — принудительный long-only
+    if (ins.shortEnabled === false) setDirection('long');
     if (lastPrice) recalcBounds(lastPrice, levels, stepType, stepValue);
   };
 
@@ -238,7 +242,8 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
             rsiOversold,
             rsiOverbought,
             useRsiFilter,
-            direction,
+            // shortEnabled=false → принудительный long-only независимо от состояния UI
+            direction: instrument?.shortEnabled === false ? 'long' : direction,
             maxPositionLots: maxPosition,
           },
         }),
@@ -568,6 +573,7 @@ export default function RobotWizard({ open, onOpenChange, editRobot, initialStra
       ['Имя', robotName()],
       ['Стратегия', strategy === 'grid' ? 'Grid (сетка)' : signalType === 'ema_cross' ? `EMA ${emaFast}/${emaSlow} cross` : 'RSI-разворот'],
       ['Инструмент', instrument?.ticker ?? editRobot?.ticker ?? '—'],
+      ...(instrument ? ([['Класс', instrumentTypeLabel(instrument.type)]] as Array<[string, string]>) : []),
       ['Режим', mode === 'live' ? 'Боевой' : 'Песочница'],
     ];
     if (strategy === 'grid') {
@@ -615,6 +621,7 @@ function StepStrategy(p: {
   name: string;
   setName: (v: string) => void;
 }) {
+  const longOnly = p.instrument?.shortEnabled === false;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3">
@@ -643,7 +650,7 @@ function StepStrategy(p: {
       </div>
 
       <div>
-        <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.08em] text-fg-secondary">Инструмент FORTS</div>
+        <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.08em] text-fg-secondary">Инструмент</div>
         {p.editTicker && !p.instrument ? (
           <div className="rounded-lg border border-subtle bg-inset px-3 py-2.5">
             <span className="mono text-sm font-semibold uppercase text-fg">{p.editTicker}</span>
@@ -651,6 +658,23 @@ function StepStrategy(p: {
           </div>
         ) : (
           <InstrumentPicker value={p.instrument} onChange={p.onInstrument} />
+        )}
+        {p.instrument && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <Badge variant="neutral" size="compact">
+              {instrumentTypeLabel(p.instrument.type)}
+            </Badge>
+            {longOnly && (
+              <Badge variant="warn" size="compact">
+                только лонг
+              </Badge>
+            )}
+          </div>
+        )}
+        {longOnly && (
+          <div className="mt-2 rounded-lg border border-warn/30 bg-[rgba(245,165,36,0.08)] px-3 py-2 text-xs text-warn">
+            Шорт по {p.instrument?.ticker} недоступен (shortEnabled=выкл) — робот будет работать только в лонг.
+          </div>
         )}
       </div>
 
@@ -660,12 +684,15 @@ function StepStrategy(p: {
           <SegmentedControl
             options={[
               { value: 'long' as const, label: 'Long' },
-              { value: 'short' as const, label: 'Short' },
-              { value: 'both' as const, label: 'Оба' },
+              { value: 'short' as const, label: 'Short', disabled: longOnly },
+              { value: 'both' as const, label: 'Оба', disabled: longOnly },
             ]}
-            value={p.direction}
+            value={longOnly ? 'long' : p.direction}
             onChange={p.setDirection}
           />
+          {longOnly && (
+            <div className="mt-1 text-xs text-fg-muted">По выбранному инструменту доступен только лонг.</div>
+          )}
         </div>
       )}
 

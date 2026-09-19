@@ -8,21 +8,24 @@ import { motion } from 'framer-motion';
 import { CircleX } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Position } from '@/types/trading';
+import type { InstrumentType } from '@/types/market';
 import { useConnectionStore, selectIsConnected } from '@/store/connection';
 import { useMarketStore } from '@/store/market';
 import { useTradingStore } from '@/store/trading';
 import { useRiskStore } from '@/store/risk';
-import { cancelOrder, getOrders, getPortfolio, postOrder } from '@/lib/tinvest/services';
+import { cancelOrder, getMarginAttributes, getOrders, getPortfolio, postOrder, type MarginAttributes } from '@/lib/tinvest/services';
 import {
   mockGetFutures,
   mockGetJournalEvents,
   mockGetLastPrices,
+  mockGetMarginAttributes,
   mockGetPortfolio,
   mockGetPositions,
   mockGetTrades,
 } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS, usePolling } from '@/lib/tinvest/polling';
 import { formatNumber, formatSignedRub, formatTime } from '@/lib/format';
+import { useInstrumentMetaMap } from '@/components/dashboard/instrumentMeta';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
 import PageHeader from '@/components/PageHeader';
 import MarginBar from '@/components/monitor/MarginBar';
@@ -46,6 +49,16 @@ import {
 
 type SourceFilter = 'all' | 'robot' | 'manual';
 type MobileTab = 'positions' | 'orders' | 'feed';
+/** Фильтр позиций по классу инструмента (все торговые классы Т-Инвестиций) */
+type ClassFilter = 'all' | InstrumentType;
+const CLASS_FILTERS: Array<[ClassFilter, string]> = [
+  ['all', 'Все'],
+  ['stock', 'Акции'],
+  ['future', 'Фьючерсы'],
+  ['etf', 'ETF'],
+  ['currency', 'Валюта'],
+  ['bond', 'ОФЗ'],
+];
 
 export default function Positions() {
   const navigate = useNavigate();
@@ -66,11 +79,15 @@ export default function Positions() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [streamLost, setStreamLost] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [classFilter, setClassFilter] = useState<ClassFilter>('all');
   const [mobileTab, setMobileTab] = useState<MobileTab>('positions');
   const [slTpTarget, setSlTpTarget] = useState<Position | null>(null);
   const [closeTarget, setCloseTarget] = useState<Position | null>(null);
   const [closeAllOpen, setCloseAllOpen] = useState(false);
   const [busyCloseAll, setBusyCloseAll] = useState(false);
+  // Маржинальные показатели счёта (UsersService/GetMarginAttributes; демо — mock)
+  const [marginAttr, setMarginAttr] = useState<MarginAttributes | null>(null);
+  const metaMap = useInstrumentMetaMap();
 
   // Локальные демо-настройки (refs, чтобы поллинг видел свежие значения)
   const closedIdsRef = useRef<Set<string>>(new Set());
@@ -124,6 +141,7 @@ export default function Positions() {
       const blocked = Math.max(positionsMargin, p.blockedMargin * 0.6);
       t.setPortfolio({ ...p, blockedMargin: blocked, totalAmount: p.totalAmount + jitter, dayPnl: p.dayPnl + jitter });
       useRiskStore.getState().setCurrents(p.dayPnl + jitter, (blocked / p.totalAmount) * 100);
+      setMarginAttr(mockGetMarginAttributes());
       setStreamLost(false);
       setLastUpdated(Date.now());
       return;
@@ -146,6 +164,10 @@ export default function Positions() {
       useRiskStore
         .getState()
         .setCurrents(pf.dayPnl, pf.totalAmount > 0 ? (pf.blockedMargin / pf.totalAmount) * 100 : 0);
+      // Маржа по счёту (UsersService) — необязательная, ошибка не роняет поток
+      getMarginAttributes()
+        .then(setMarginAttr)
+        .catch(() => {});
       setStreamLost(false);
       setLastUpdated(Date.now());
     } catch {
@@ -180,14 +202,25 @@ export default function Positions() {
       .map(toMonitorOrder);
   }, [useMock, demoOrders, orders]);
 
-  // ----- фильтр по источнику -----
+  // ----- фильтр по источнику и классу инструмента -----
   const filteredPositions = useMemo(
     () =>
-      positions.filter((p) =>
-        sourceFilter === 'all' ? true : sourceFilter === 'robot' ? positionSource(p).source === 'robot' : positionSource(p).source === 'manual',
-      ),
-    [positions, sourceFilter],
+      positions.filter((p) => {
+        if (sourceFilter !== 'all' && positionSource(p).source !== (sourceFilter === 'robot' ? 'robot' : 'manual')) return false;
+        if (classFilter !== 'all' && metaMap.get(p.instrumentId)?.type !== classFilter) return false;
+        return true;
+      }),
+    [positions, sourceFilter, classFilter, metaMap],
   );
+  // Счётчики позиций по классам (для чипов)
+  const classCounts = useMemo(() => {
+    const counts = new Map<InstrumentType, number>();
+    for (const p of positions) {
+      const t = metaMap.get(p.instrumentId)?.type;
+      if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return counts;
+  }, [positions, metaMap]);
   const filteredOrders = useMemo(
     () => monitorOrders.filter((o) => (sourceFilter === 'all' ? true : sourceFilter === 'robot' ? o.source === 'robot' : o.source === 'manual')),
     [monitorOrders, sourceFilter],
@@ -490,7 +523,36 @@ export default function Positions() {
       blockedMargin={portfolio?.blockedMargin ?? 0}
       freeMargin={portfolio?.freeMargin ?? 0}
       unrealizedPnl={unrealizedPnl}
+      liquidPortfolio={marginAttr?.liquidPortfolio}
     />
+  );
+
+  // Чипы фильтра по классам инструментов (Все/Акции/Фьючерсы/ETF/Валюта/ОФЗ)
+  const classChips = (
+    <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Класс инструментов">
+      {CLASS_FILTERS.map(([v, label]) => {
+        const activeChip = classFilter === v;
+        const count = v === 'all' ? positions.length : (classCounts.get(v) ?? 0);
+        return (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={activeChip}
+            onClick={() => setClassFilter(v)}
+            className={cn(
+              'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors duration-[120ms]',
+              activeChip
+                ? 'border-yellow/50 bg-yellow-glow text-yellow'
+                : 'border-subtle text-fg-muted hover:border-strong hover:text-fg-secondary',
+            )}
+          >
+            {label}
+            <span className="mono ml-1 text-[10px] opacity-80">{count}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 
   const positionsSection = (
@@ -509,6 +571,14 @@ export default function Positions() {
   );
 
   const ordersSection = <OrdersSection orders={filteredOrders} onCancel={handleCancelOrder} cancellingIds={cancellingIds} />;
+
+  // Секция позиций с чипами фильтра по классам
+  const positionsBlock = (
+    <div className="space-y-3">
+      {classChips}
+      {positionsSection}
+    </div>
+  );
 
   const feedSection = <ExecutionsFeed />;
 
@@ -539,7 +609,7 @@ export default function Positions() {
       {/* ===== Desktop: сетка 8/4 ===== */}
       <div className="hidden gap-5 lg:grid lg:grid-cols-12">
         <div className="col-span-8 space-y-5">
-          {positionsSection}
+          {positionsBlock}
           {ordersSection}
         </div>
         <div className="col-span-4 space-y-5">
@@ -550,7 +620,7 @@ export default function Positions() {
 
       {/* ===== Tablet: две колонки без табов ===== */}
       <div className="hidden space-y-4 md:block lg:hidden">
-        {positionsSection}
+        {positionsBlock}
         <div className="grid grid-cols-2 gap-4">
           <RiskMap positions={positions} tradesToday={tradesToday} />
           {feedSection}
@@ -590,7 +660,7 @@ export default function Positions() {
         </div>
         {mobileTab === 'positions' && (
           <div className="space-y-4">
-            {positionsSection}
+            {positionsBlock}
             <RiskMap positions={positions} tradesToday={tradesToday} />
           </div>
         )}

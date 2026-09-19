@@ -15,6 +15,8 @@ export interface MarginBarProps {
   blockedMargin: number;
   freeMargin: number;
   unrealizedPnl: number;
+  /** Ликвидный портфель из UsersService/GetMarginAttributes (₽); undefined — данные ещё не загружены */
+  liquidPortfolio?: number;
 }
 
 function marginZone(pct: number): 'long' | 'warn' | 'short' {
@@ -51,7 +53,7 @@ function MarginProgress({ pct, className }: { pct: number; className?: string })
   );
 }
 
-export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unrealizedPnl }: MarginBarProps) {
+export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unrealizedPnl, liquidPortfolio }: MarginBarProps) {
   const [open, setOpen] = useState(false);
   const maxMarginPct = useRiskStore((s) => s.limits.maxMarginPct);
   const pct = totalAmount > 0 ? (blockedMargin / totalAmount) * 100 : 0;
@@ -61,6 +63,8 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
     { label: 'Стоимость портфеля', value: <PriceTicker value={totalAmount} format={(v) => formatRub(v)} /> },
     { label: 'Заблокировано ГО', value: formatRub(blockedMargin) },
     { label: 'Свободная маржа', value: formatRub(freeMargin) },
+    // Ликвидный портфель — из GetMarginAttributes (UsersService), демо — mock
+    { label: 'Ликвидный портфель', value: liquidPortfolio !== undefined ? formatRub(liquidPortfolio) : '—' },
     {
       label: 'Нереализованный P&L',
       value: (
@@ -118,7 +122,7 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
 
       {/* Desktop: полная полоса */}
       <div className="hidden items-center gap-6 md:flex">
-        {cells.slice(0, 3).map((c) => (
+        {cells.slice(0, 4).map((c) => (
           <div key={c.label} className="min-w-0">
             <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">{c.label}</div>
             <div className="mono mt-1 truncate text-base font-bold text-fg">{c.value}</div>
@@ -142,7 +146,7 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
         </Link>
         <div className="min-w-0">
           <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Нереализованный P&L</div>
-          <div className="mono mt-1 truncate text-base font-bold">{cells[3].value}</div>
+          <div className="mono mt-1 truncate text-base font-bold">{cells[4].value}</div>
         </div>
       </div>
     </section>

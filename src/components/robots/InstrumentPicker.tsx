@@ -1,23 +1,32 @@
-// Поиск инструмента FORTS для конструктора робота: строка поиска, группировка
-// Валюта/Индексы/Товары/Акции, дебаунс, выбор → onChange(instrument, lastPrice).
+// Поиск инструмента для конструктора робота по ВСЕМ торговым классам Т-Инвестиций
+// (findInstrumentAll): акции, фьючерсы, ETF, валюты, ОФЗ (+опционы).
+// Индексы исключены — они неторгуемые (только котировки, бриф §4).
+// Группировка по классу с бейджами, «только лонг» для shortEnabled=false.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Search, ChevronDown } from 'lucide-react';
-import type { Instrument } from '@/types/market';
+import type { Instrument, InstrumentType } from '@/types/market';
+import Badge from '@/components/Badge';
 import { useConnectionStore } from '@/store/connection';
-import { findInstrument, getLastPrices } from '@/lib/tinvest/services';
-import { mockFindInstrument, mockGetLastPrices } from '@/lib/tinvest/mock';
+import { findInstrumentAll, getLastPrices } from '@/lib/tinvest/services';
+import { isTradable, instrumentTypeLabel } from '@/lib/tinvest/instruments';
+import { mockFindInstrumentAll, mockGetLastPrices } from '@/lib/tinvest/mock';
 import { cn } from '@/lib/utils';
 
-function groupOf(ins: Instrument): string {
-  const a = ins.basicAsset.toUpperCase();
-  if (['USD', 'EUR', 'CNY', 'HKD'].some((c) => a.includes(c))) return 'Валюта';
-  if (['IMOEX', 'RTSI', 'MOEXOG'].some((c) => a.includes(c))) return 'Индексы';
-  if (['BR', 'BRENT', 'GOLD', 'SILV', 'NG', 'LCU'].some((c) => a.includes(c))) return 'Товары';
-  return 'Акции';
-}
+/** Заголовки групп по классам (порядок = порядок групп в дропдауне) */
+const GROUP_LABELS: Array<[InstrumentType, string]> = [
+  ['stock', 'Акции'],
+  ['future', 'Фьючерсы'],
+  ['etf', 'ETF'],
+  ['currency', 'Валюта'],
+  ['bond', 'ОФЗ'],
+  ['option', 'Опционы'],
+];
 
-const GROUP_ORDER = ['Валюта', 'Индексы', 'Товары', 'Акции'];
+/** В выборку робота идут только торгуемые классы (индексы — только котировки) */
+function selectable(ins: Instrument): boolean {
+  return ins.type !== 'index' && isTradable(ins);
+}
 
 export default function InstrumentPicker({
   value,
@@ -35,13 +44,14 @@ export default function InstrumentPicker({
 
   useEffect(() => {
     let alive = true;
-    const req = token ? findInstrument(query || 'F') : Promise.resolve(mockFindInstrument(query));
+    // Пустой запрос: в демо отдаём весь каталог, в боевом — стартовую выборку по «S»
+    const req = token ? findInstrumentAll(query || 'S') : Promise.resolve(mockFindInstrumentAll(query));
     Promise.resolve(req)
       .then((list) => {
-        if (alive) setFetched({ q: query, items: list.slice(0, 30) });
+        if (alive) setFetched({ q: query, items: list.filter(selectable).slice(0, 40) });
       })
       .catch(() => {
-        if (alive) setFetched({ q: query, items: mockFindInstrument(query) });
+        if (alive) setFetched({ q: query, items: mockFindInstrumentAll(query).filter(selectable) });
       });
     return () => {
       alive = false;
@@ -62,13 +72,12 @@ export default function InstrumentPicker({
   }, [open]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, Instrument[]>();
+    const map = new Map<InstrumentType, Instrument[]>();
     for (const ins of results) {
-      const g = groupOf(ins);
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(ins);
+      if (!map.has(ins.type)) map.set(ins.type, []);
+      map.get(ins.type)!.push(ins);
     }
-    return GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({ group: g, items: map.get(g)! }));
+    return GROUP_LABELS.filter(([t]) => map.has(t)).map(([t, label]) => ({ group: label, items: map.get(t)! }));
   }, [results]);
 
   const pick = async (ins: Instrument) => {
@@ -96,12 +105,15 @@ export default function InstrumentPicker({
       >
         <Search className="h-4 w-4 shrink-0 text-fg-muted" />
         {value ? (
-          <span className="min-w-0 flex-1">
-            <span className="mono text-sm font-semibold uppercase text-fg">{value.ticker}</span>
-            <span className="ml-2 truncate text-xs text-fg-secondary">{value.name}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="mono shrink-0 text-sm font-semibold uppercase text-fg">{value.ticker}</span>
+            <Badge variant="neutral" size="compact" className="shrink-0">
+              {instrumentTypeLabel(value.type)}
+            </Badge>
+            <span className="truncate text-xs text-fg-secondary">{value.name}</span>
           </span>
         ) : (
-          <span className="flex-1 text-sm text-fg-muted">Выберите фьючерс FORTS…</span>
+          <span className="flex-1 text-sm text-fg-muted">Выберите инструмент…</span>
         )}
         <ChevronDown className={cn('h-4 w-4 shrink-0 text-fg-muted transition-transform', open && 'rotate-180')} />
       </button>
@@ -120,7 +132,7 @@ export default function InstrumentPicker({
                 autoFocus
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Поиск: Si, BR, индекс…"
+                placeholder="Поиск: SBER, Si, TMOS, ОФЗ, USD…"
                 className="w-full rounded-lg bg-inset px-3 py-2 text-sm text-fg outline-none placeholder:text-fg-muted"
               />
             </div>
@@ -143,13 +155,21 @@ export default function InstrumentPicker({
                       onClick={() => void pick(ins)}
                       className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-panel"
                     >
-                      <span className="mono w-16 shrink-0 text-sm font-semibold uppercase text-fg">{ins.ticker}</span>
+                      <span className="mono w-16 shrink-0 truncate text-sm font-semibold uppercase text-fg">{ins.ticker}</span>
                       <span className="min-w-0 flex-1 truncate text-xs text-fg-secondary">{ins.name}</span>
+                      {ins.shortEnabled === false && (
+                        <span className="shrink-0 rounded-full bg-[rgba(245,165,36,0.12)] px-1.5 text-[10px] font-semibold leading-4 text-warn">
+                          только лонг
+                        </span>
+                      )}
                       <span className="mono shrink-0 text-[10px] text-fg-muted">лот {ins.lot}</span>
                     </button>
                   ))}
                 </div>
               ))}
+              <div className="px-2 pb-1 pt-2 text-[10px] leading-4 text-fg-muted">
+                Индексы (IMOEX, RTSI…) не торгуются — доступны только их котировки в терминале.
+              </div>
             </div>
           </motion.div>
         )}
