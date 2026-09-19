@@ -27,10 +27,12 @@ function ToastCard({ item, onClose }: { item: ToastItem; onClose: (id: number) =
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -12 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-xl border border-subtle bg-panel-raised px-3.5 py-3 shadow-lg shadow-black/30"
+      className="pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-xl border border-strong bg-overlay px-3.5 py-3 shadow-overlay"
       role="status"
     >
-      <Icon className={cn('mt-0.5 h-[18px] w-[18px] shrink-0', iconClass)} />
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-panel-raised">
+        <Icon className={cn('h-4 w-4', iconClass)} />
+      </span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-fg">{item.title}</div>
         {item.details && <div className="mono mt-0.5 truncate text-xs text-fg-secondary">{item.details}</div>}
@@ -59,7 +61,7 @@ export default function ToastHost() {
   const close = (id: number) => setItems((xs) => xs.filter((x) => x.id !== id));
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-[95] flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:top-4 sm:items-end sm:px-0">
+    <div className="pointer-events-none fixed inset-x-0 top-3 z-[100] flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:top-4 sm:items-end sm:px-0">
       <AnimatePresence>
         {items.map((t) => (
           <ToastCard key={t.id} item={t} onClose={close} />

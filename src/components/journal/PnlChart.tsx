@@ -51,7 +51,8 @@ export default function PnlChart({ trades, best, worst, onTradeClick }: PnlChart
     <section className="flex min-h-0 flex-col rounded-xl border border-subtle bg-panel p-4 md:p-5">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-fg">Накопленный P&L</h3>
-        <div className="flex rounded-[10px] bg-inset p-0.5">
+        {/* v2 §5.5.4: SegmentedControl compact 28px в заголовке панели */}
+        <div className="flex h-7 items-center rounded-[10px] bg-inset p-0.5">
           {(
             [
               ['rub', '₽'],
@@ -63,7 +64,7 @@ export default function PnlChart({ trades, best, worst, onTradeClick }: PnlChart
               type="button"
               onClick={() => setUnit(v)}
               className={cn(
-                'relative rounded-lg px-3 py-1 text-xs font-semibold transition-colors',
+                'relative h-full rounded-lg px-3 text-xs font-semibold transition-colors',
                 unit === v ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
               )}
             >
@@ -103,9 +104,10 @@ export default function PnlChart({ trades, best, worst, onTradeClick }: PnlChart
               />
               <YAxis
                 tickFormatter={(v: number) => (unit === 'rub' ? `${formatNumber(Math.round(v / 1000))}k` : `${v}%`)}
-                tick={{ fill: 'var(--text-muted)', fontSize: 10, fontFamily: 'JetBrains Mono' }}
+                tick={{ fill: 'var(--text-muted)', fontSize: 11, fontFamily: 'JetBrains Mono' }}
                 tickLine={false}
                 axisLine={false}
+                tickCount={4}
                 width={48}
               />
               <Tooltip

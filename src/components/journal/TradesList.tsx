@@ -1,8 +1,8 @@
 // Список сделок журнала (journal.md §1): desktop — таблица с сортировкой (время/P&L/длительность,
 // layout-переезд строк), mobile — карточки со свайпом влево «Подробнее» (жёлтая подложка).
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowDown, ArrowUp, Bot, Hand } from 'lucide-react';
+import { ArrowDown, ArrowDownRight, ArrowUp, ArrowUpRight, Bot, Hand } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Badge from '@/components/Badge';
 import EmptyState from '@/components/EmptyState';
@@ -40,7 +40,7 @@ function SortHeader({
       type="button"
       onClick={() => onToggle(k)}
       className={cn(
-        'inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.08em] transition-colors',
+        'inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.06em] transition-colors',
         sortKey === k ? 'text-yellow' : 'text-fg-muted hover:text-fg-secondary',
         right && 'flex-row-reverse',
       )}
@@ -57,9 +57,11 @@ export interface TradesListProps {
   /** Активны ли фильтры (для текста пустого состояния) */
   filtersActive: boolean;
   onResetFilters: () => void;
+  /** Действие справа в sticky-футере панели (напр. «Экспорт»), v2 §5.5.7 */
+  footerAction?: ReactNode;
 }
 
-export default function TradesList({ trades, onOpen, filtersActive, onResetFilters }: TradesListProps) {
+export default function TradesList({ trades, onOpen, filtersActive, onResetFilters, footerAction }: TradesListProps) {
   const [sortKey, setSortKey] = useState<SortKey>('time');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -120,6 +122,19 @@ export default function TradesList({ trades, onOpen, filtersActive, onResetFilte
                 <button type="button" onClick={() => onOpen(t)} className="w-full rounded-xl border border-subtle bg-panel-raised p-3 text-left">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
+                      {/* v2 §5.5.6: мини-индикатор направления слева от тикера */}
+                      <span
+                        className={cn(
+                          'flex h-5 w-5 shrink-0 items-center justify-center rounded',
+                          t.direction === 'long' ? 'bg-long-dim text-long' : 'bg-short-dim text-short',
+                        )}
+                      >
+                        {t.direction === 'long' ? (
+                          <ArrowUpRight className="h-3 w-3" />
+                        ) : (
+                          <ArrowDownRight className="h-3 w-3" />
+                        )}
+                      </span>
                       <span className="mono text-sm font-semibold uppercase text-fg">{t.ticker}</span>
                       <Badge variant={t.direction === 'long' ? 'long' : 'short'}>{t.direction === 'long' ? 'Лонг' : 'Шорт'}</Badge>
                     </div>
@@ -131,7 +146,9 @@ export default function TradesList({ trades, onOpen, filtersActive, onResetFilte
                     <span>
                       {formatDateShort(t.time)} {formatTime(t.time)} · {t.lots} лот
                     </span>
-                    <Badge variant={REASON_VARIANT[t.reason]}>{REASON_LABELS[t.reason]}</Badge>
+                    <Badge variant={REASON_VARIANT[t.reason]} className="w-[86px] justify-center">
+                      {REASON_LABELS[t.reason]}
+                    </Badge>
                   </div>
                 </button>
               </SwipeActionRow>
@@ -140,27 +157,27 @@ export default function TradesList({ trades, onOpen, filtersActive, onResetFilte
         </AnimatePresence>
       </ul>
 
-      {/* ===== Desktop: таблица ===== */}
-      <div className="hidden overflow-x-auto md:block">
+      {/* ===== Desktop: таблица (v2 §5.5.7: фиксированная высота, sticky-заголовок) ===== */}
+      <div className="hidden max-h-[calc(100dvh-360px)] min-h-[280px] overflow-auto md:block">
         <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 bg-panel">
+          <thead className="sticky top-0 z-[5] bg-panel shadow-[0_1px_0_0_var(--border-strong)]">
             <tr className="text-left">
               <th className="px-4 py-2.5">
                 <SortHeader label="Время" k="time" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
               </th>
-              <th className="px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Инструмент</th>
-              <th className="px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Направление</th>
-              <th className="px-4 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Лоты</th>
-              <th className="px-4 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Вход</th>
-              <th className="px-4 py-2.5 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Выход</th>
+              <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Инструмент</th>
+              <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Направление</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Лоты</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Вход</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Выход</th>
               <th className="px-4 py-2.5 text-right">
                 <SortHeader label="P&L" k="pnl" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} right />
               </th>
               <th className="px-4 py-2.5 text-right">
                 <SortHeader label="Длительность" k="duration" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} right />
               </th>
-              <th className="px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Источник</th>
-              <th className="px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Закрытие</th>
+              <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Источник</th>
+              <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-muted">Закрытие</th>
             </tr>
           </thead>
           <tbody>
@@ -212,13 +229,24 @@ export default function TradesList({ trades, onOpen, filtersActive, onResetFilte
                     )}
                   </td>
                   <td className="px-4 py-2">
-                    <Badge variant={REASON_VARIANT[t.reason]}>{REASON_LABELS[t.reason]}</Badge>
+                    {/* v2 §5.5.3: фиксированная ширина бейджей причины закрытия */}
+                    <Badge variant={REASON_VARIANT[t.reason]} className="w-[86px] justify-center">
+                      {REASON_LABELS[t.reason]}
+                    </Badge>
                   </td>
                 </motion.tr>
               ))}
             </AnimatePresence>
           </tbody>
         </table>
+      </div>
+
+      {/* v2 §5.5.7: sticky-футер панели «Найдено N · Экспорт» */}
+      <div className="flex h-10 items-center justify-between gap-4 border-t border-strong bg-panel-raised px-4">
+        <span className="text-[13px] text-fg-secondary">
+          Найдено <span className="mono font-semibold text-fg">{trades.length}</span>
+        </span>
+        {footerAction}
       </div>
     </section>
   );

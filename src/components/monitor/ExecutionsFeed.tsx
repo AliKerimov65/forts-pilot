@@ -24,7 +24,7 @@ export default function ExecutionsFeed() {
           className="py-6"
         />
       ) : (
-        <ul className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto lg:max-h-[520px]">
+        <ul className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto max-h-[320px] lg:max-h-[520px]">
           <AnimatePresence initial={false}>
             {items.map((e) => {
               const isBuy = e.text.startsWith('Куплено') || e.text.includes('купил');
@@ -47,10 +47,15 @@ export default function ExecutionsFeed() {
                   <span className="min-w-0 flex-1 truncate text-xs text-fg-secondary" title={e.text}>
                     {e.text}
                   </span>
+                  {/* v2 §5.4.6: иконка источника с tooltip */}
                   {isRobot ? (
-                    <Bot className="h-3.5 w-3.5 shrink-0 text-yellow" />
+                    <span title="Источник: робот" className="shrink-0">
+                      <Bot className="h-3.5 w-3.5 text-yellow" />
+                    </span>
                   ) : (
-                    <Hand className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                    <span title="Источник: ручная сделка" className="shrink-0">
+                      <Hand className="h-3.5 w-3.5 text-fg-muted" />
+                    </span>
                   )}
                   {e.amount !== undefined && (
                     <span className={cn('mono shrink-0 text-[11px] font-semibold', e.amount >= 0 ? 'text-long' : 'text-short')}>

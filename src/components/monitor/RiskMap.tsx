@@ -17,6 +17,7 @@ function StopGauge({ position }: { position: Position }) {
   const range = Math.max(hi - lo, 1e-9);
   const markerPct = Math.min(100, Math.max(0, ((position.currentPrice - lo) / range) * 100));
   const toStop = pctToLevel(position.currentPrice, sl);
+  const toTarget = pctToLevel(position.currentPrice, tp);
   const danger = toStop < 0.5; // близко к стопу — пульсация
 
   // для лонга SL слева (красная зона слева от маркера), для шорта — справа
@@ -27,6 +28,8 @@ function StopGauge({ position }: { position: Position }) {
         <span className="mono text-xs font-semibold uppercase text-fg">{position.ticker}</span>
         <span className={cn('mono text-[11px]', danger ? 'text-short' : 'text-fg-secondary')}>
           до стопа {toStop.toFixed(1).replace('.', ',')}%
+          {/* v2 §5.4.5: при >50% красной зоны — явная подпись */}
+          {danger && ' · близко к стопу'}
         </span>
       </div>
       <div className={cn('relative mt-1.5 h-2 rounded-full bg-inset', danger && 'animate-pulse')}>
@@ -47,9 +50,14 @@ function StopGauge({ position }: { position: Position }) {
           transition={{ type: 'spring', stiffness: 300, damping: 28 }}
         />
       </div>
+      {/* v2 §5.4.5: масштаб-подписи по краям шкалы (абсолют + % от текущей) */}
       <div className="mono mt-1 flex justify-between text-[10px] text-fg-muted">
-        <span className="text-short">{formatNumber(sl)}</span>
-        <span className="text-long">{formatNumber(tp)}</span>
+        <span className="text-short">
+          SL {formatNumber(sl)} · −{toStop.toFixed(1).replace('.', ',')}%
+        </span>
+        <span className="text-long">
+          TP {formatNumber(tp)} · +{toTarget.toFixed(1).replace('.', ',')}%
+        </span>
       </div>
     </div>
   );

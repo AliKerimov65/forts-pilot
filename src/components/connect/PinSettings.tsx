@@ -3,7 +3,7 @@
 // сам LockScreen не изменяется. Блокировка срабатывает при сворачивании приложения.
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Lock, LockOpen } from 'lucide-react';
+import { AlertCircle, Lock, LockOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isLockEnabled, setLockPin } from '@/components/LockScreen';
 import { toast } from '@/components/connect/toast';
@@ -31,7 +31,7 @@ function PinInput({
       value={value}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH))}
       placeholder={placeholder}
-      className="mono h-11 w-full rounded-[10px] border border-subtle bg-inset px-3 text-center text-lg tracking-[0.5em] text-fg outline-none transition-colors placeholder:text-fg-muted focus:border-strong"
+      className="mono h-11 w-full rounded-[10px] border border-subtle bg-inset px-3 text-center text-lg tracking-[0.5em] text-fg outline-none transition-[border-color,box-shadow] duration-[120ms] placeholder:text-fg-muted hover:border-strong focus:border-strong focus:shadow-[0_0_0_3px_var(--focus-ring)]"
     />
   );
 }
@@ -82,7 +82,8 @@ export default function PinSettings() {
   };
 
   return (
-    <div className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
+    // Вложенная в секцию «Безопасность» панель — уровень L0 inset (design-v2.md §2.1)
+    <div className="rounded-xl border border-subtle bg-inset p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <span
@@ -132,7 +133,7 @@ export default function PinSettings() {
             className="overflow-hidden"
           >
             {enabled && !setupOpen ? (
-              <div className="mt-4 flex items-center justify-between rounded-[10px] border border-subtle bg-inset px-3 py-2.5">
+              <div className="mt-4 flex items-center justify-between rounded-[10px] border border-subtle bg-panel px-3 py-2.5">
                 <span className="mono text-sm text-fg-secondary">PIN установлен ••••</span>
                 <button
                   type="button"
@@ -155,8 +156,9 @@ export default function PinSettings() {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="text-xs font-medium text-short"
+                      className="flex items-center gap-1 text-xs font-medium leading-4 text-short"
                     >
+                      <AlertCircle className="h-3 w-3 shrink-0" />
                       {error}
                     </motion.p>
                   )}

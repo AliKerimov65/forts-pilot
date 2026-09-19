@@ -78,7 +78,7 @@ export default function JournalSummary({ stats }: { stats: JournalStats }) {
         ))}
       </div>
       {/* Desktop: 5 в ряд */}
-      <div className={cn('hidden gap-3 md:grid md:grid-cols-3 xl:grid-cols-5')}>
+      <div className={cn('hidden gap-4 md:grid md:grid-cols-3 lg:gap-5 xl:grid-cols-5')}>
         {cards.map((c, i) => (
           <motion.div
             key={i}

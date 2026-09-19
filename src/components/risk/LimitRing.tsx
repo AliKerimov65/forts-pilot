@@ -9,6 +9,10 @@ export interface LimitRingProps {
   label: string;
   /** Подпись-значение под кольцом, напр. «1 800 / 10 000 ₽» */
   value: string;
+  /** Мини-подпись контекста/тренда под значением, caption (design-v2.md 5.6.2) */
+  caption?: string;
+  /** Клик по кольцу → скролл к соответствующей секции (design-v2.md 5.6.2) */
+  onClick?: () => void;
   /** Задержка stagger-анимации при загрузке */
   delay?: number;
 }
@@ -28,13 +32,27 @@ const STROKE: Record<string, string> = {
   'text-short': 'var(--short)',
 };
 
-export default function LimitRing({ ratio, label, value, delay = 0 }: LimitRingProps) {
+export default function LimitRing({ ratio, label, value, caption, onClick, delay = 0 }: LimitRingProps) {
   const clamped = Math.min(1, Math.max(0, ratio));
   const colorClass = ringColorClass(ratio);
   const hot = ratio > 0.8;
 
+  const Wrapper = onClick ? 'button' : 'div';
+
   return (
-    <div className="flex w-[132px] shrink-0 flex-col items-center gap-1.5 text-center">
+    <Wrapper
+      {...(onClick
+        ? {
+            type: 'button' as const,
+            onClick,
+            'aria-label': `${label}: ${Math.round(ratio * 100)}% — перейти к настройкам`,
+          }
+        : {})}
+      className={cn(
+        'flex w-[132px] shrink-0 snap-center flex-col items-center gap-1.5 rounded-xl p-1 text-center',
+        onClick && 'transition-colors duration-[120ms] hover:bg-panel-raised',
+      )}
+    >
       <motion.div
         className={cn('relative h-[72px] w-[72px]', hot && 'animate-pulse')}
         initial={{ opacity: 0 }}
@@ -64,7 +82,8 @@ export default function LimitRing({ ratio, label, value, delay = 0 }: LimitRingP
       <div>
         <div className="text-xs font-semibold text-fg">{label}</div>
         <div className="mono mt-0.5 text-[11px] leading-tight text-fg-secondary">{value}</div>
+        {caption && <div className="mt-0.5 text-[11px] leading-tight text-fg-muted">{caption}</div>}
       </div>
-    </div>
+    </Wrapper>
   );
 }

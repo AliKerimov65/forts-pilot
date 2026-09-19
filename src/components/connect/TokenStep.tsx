@@ -4,7 +4,7 @@
 // ошибки: красная рамка + shake + понятная подпись.
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CheckCircle2, ClipboardPaste, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, ClipboardPaste, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from '@/components/connect/toast';
@@ -81,13 +81,14 @@ export default function TokenStep({ verify }: TokenStepProps) {
     }
   };
 
+  // Состояния поля по спеке v2 (v2-components.md §5): ошибка — рамка short + кольцо, успех — border-long + Check
   const borderClass = error
-    ? 'border-short'
+    ? 'border-short shadow-[0_0_0_3px_rgba(234,57,67,0.25)]'
     : formatOk === true
       ? 'border-long'
       : formatOk === false
         ? 'border-warn'
-        : 'border-subtle focus-within:border-strong';
+        : 'border-subtle hover:border-strong focus-within:border-strong focus-within:shadow-[0_0_0_3px_var(--focus-ring)]';
 
   return (
     <div className="space-y-3">
@@ -95,8 +96,14 @@ export default function TokenStep({ verify }: TokenStepProps) {
         key={shakeNonce}
         animate={shakeNonce ? { x: [0, -8, 8, -6, 6, 0] } : undefined}
         transition={{ duration: 0.3 }}
-        className={cn('flex items-center gap-2 rounded-[10px] border bg-inset px-3 transition-colors', borderClass, checking && 'animate-pulse')}
+        className={cn('flex items-center gap-2 rounded-[10px] border bg-inset px-3 transition-[border-color,box-shadow] duration-[120ms]', borderClass, checking && 'animate-pulse')}
       >
+        {/* Префикс t. — визуальный якорь живой валидации, text-yellow при корректном формате (design-v2.md 5.7.2) */}
+        {formatOk === true && !error && (
+          <span className="mono -mr-1 shrink-0 rounded bg-yellow-glow px-1.5 py-0.5 text-[11px] font-bold text-yellow">
+            t.
+          </span>
+        )}
         <input
           type={visible ? 'text' : 'password'}
           value={token}
@@ -107,11 +114,13 @@ export default function TokenStep({ verify }: TokenStepProps) {
           spellCheck={false}
           className="mono h-12 min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-muted"
           aria-label="API-токен Т-Инвестиций"
+          aria-invalid={Boolean(error)}
         />
+        {formatOk === true && !error && <Check className="h-4 w-4 shrink-0 text-long" />}
         <button
           type="button"
           onClick={() => setVisible((v) => !v)}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-panel-raised hover:text-fg"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-panel-raised hover:text-fg"
           aria-label={visible ? 'Скрыть токен' : 'Показать токен'}
         >
           {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -119,7 +128,7 @@ export default function TokenStep({ verify }: TokenStepProps) {
         <button
           type="button"
           onClick={pasteFromClipboard}
-          className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-fg-secondary transition-colors hover:bg-panel-raised hover:text-fg"
+          className="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-fg-secondary transition-colors hover:bg-panel-raised hover:text-fg"
         >
           <ClipboardPaste className="h-4 w-4" />
           <span className="hidden sm:inline">Вставить</span>
@@ -129,7 +138,14 @@ export default function TokenStep({ verify }: TokenStepProps) {
       {/* Состояние поля: ошибка / успех / подсказка формата */}
       <AnimatePresence mode="wait">
         {error ? (
-          <motion.p key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-xs font-medium text-short">
+          <motion.p
+            key="err"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center gap-1 text-xs font-medium leading-4 text-short"
+          >
+            <AlertCircle className="h-3 w-3 shrink-0" />
             {error}
           </motion.p>
         ) : formatOk === true ? (

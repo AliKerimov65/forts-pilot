@@ -98,9 +98,11 @@ export default function RobotCard({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.25 } }}
       transition={{ duration: 0.35, delay: index * 0.07, ease: [0.16, 1, 0.3, 1] }}
-      whileHover={{ y: -3 }}
       className={cn(
-        'group overflow-hidden rounded-xl border border-subtle bg-panel transition-colors hover:border-strong',
+        // v2 §5.3.3: активный робот — L2 (raised + shadow), на паузе/выкл — L1 + приглушение.
+        // Hover без translateY (§4.2): рамка усиливается, у L1 появляется тень.
+        'group overflow-hidden rounded-xl border border-subtle transition-[border-color,box-shadow] duration-150 hover:border-strong',
+        running ? 'bg-panel-raised shadow-raised' : 'bg-panel hover:shadow-raised',
         dimmed && 'opacity-75',
       )}
     >
@@ -144,42 +146,48 @@ export default function RobotCard({
           <ChevronDown className={cn('ml-auto h-4 w-4 text-fg-muted transition-transform', expanded && 'rotate-180')} />
         </div>
 
-        {/* Метрики 2×2 */}
+        {/* Метрики 2×2 (v2 §5.3.5: метки caption 11px, значения mono 14px, строки фикс. 18/20px) */}
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 px-4">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.08em] text-fg-muted">P&L за день</div>
+            <div className="h-[18px] text-[11px] uppercase leading-[18px] tracking-[0.08em] text-fg-muted">P&L за день</div>
             <PriceTicker
               value={robot.stats.dayPnl}
               signed
               format={(v) => formatSignedRub(v, 0)}
-              className={cn('mono text-sm font-bold', robot.stats.dayPnl >= 0 ? 'text-long' : 'text-short')}
+              className={cn('mono block h-5 text-sm font-bold leading-5', robot.stats.dayPnl >= 0 ? 'text-long' : 'text-short')}
             />
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-[0.08em] text-fg-muted">Сделки / win-rate</div>
-            <div className="mono text-sm font-semibold text-fg">
+            <div className="h-[18px] text-[11px] uppercase leading-[18px] tracking-[0.08em] text-fg-muted">Сделки / win-rate</div>
+            <div className="mono h-5 text-sm font-semibold leading-5 text-fg">
               {robot.stats.trades} · {(robot.stats.winRate * 100).toFixed(0)}%
             </div>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-[0.08em] text-fg-muted">Uptime</div>
-            <div className="mono text-sm font-semibold text-fg">{formatUptime(robot.stats.lastStartedAt)}</div>
+            <div className="h-[18px] text-[11px] uppercase leading-[18px] tracking-[0.08em] text-fg-muted">Uptime</div>
+            <div className="mono h-5 text-sm font-semibold leading-5 text-fg">{formatUptime(robot.stats.lastStartedAt)}</div>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-[0.08em] text-fg-muted">Экспозиция</div>
-            <div className="truncate text-sm font-medium text-fg">{getRobotExposure(robot)}</div>
+            <div className="h-[18px] text-[11px] uppercase leading-[18px] tracking-[0.08em] text-fg-muted">Экспозиция</div>
+            <div className="h-5 truncate text-sm font-medium leading-5 text-fg">{getRobotExposure(robot)}</div>
           </div>
         </div>
 
-        {/* Мини-визуал */}
-        <div className="mt-3 px-4 transition-opacity duration-200 group-hover:opacity-100" style={{ opacity: 0.85 }}>
+        {/* Мини-визуал (v2 §5.3.3: у приглушённых — grayscale 20%) */}
+        <div
+          className={cn(
+            'mt-3 px-4 transition-opacity duration-200 group-hover:opacity-100',
+            dimmed && 'grayscale-[20%]',
+          )}
+          style={{ opacity: 0.85 }}
+        >
           <RobotMiniChart robot={robot} />
         </div>
       </button>
 
       {/* Inline-детали (accordion) */}
       {expanded && (
-        <div className="mt-3 space-y-3 border-t border-subtle px-4 py-3">
+        <div className="mt-3 space-y-3 border-t border-subtle bg-inset/70 px-4 py-3">
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-[0.08em] text-fg-muted">P&L робота за 30д</div>
             <Sparkline data={pnlSpark} width={240} height={40} positive={robot.stats.totalPnl >= 0} />
@@ -224,10 +232,11 @@ export default function RobotCard({
         </div>
       )}
 
-      {/* Футер — управление */}
+      {/* Футер — управление (v2 §5.3.4: тогл слева с подписью, иконки 28px справа,
+          деструктив отделён divider'ом) */}
       <div className="mt-3 flex items-center gap-1 border-t border-subtle px-4 py-3">
         <ToggleSwitch checked={running} onChange={toggleRunning} label="Работает" />
-        <span className="ml-1.5 text-xs font-medium text-fg-secondary">{running ? 'Работает' : 'Остановлен'}</span>
+        <span className="ml-1.5 text-[13px] font-medium text-fg-secondary">{running ? 'Работает' : 'Остановлен'}</span>
         <div className="ml-auto flex items-center gap-1">
           <IconBtn
             title={robot.status === 'paused' ? 'Снять с паузы' : 'Пауза'}
@@ -241,6 +250,7 @@ export default function RobotCard({
           <IconBtn title="Статистика" onClick={() => setStatsOpen(true)}>
             <ChartColumn className="h-4 w-4" />
           </IconBtn>
+          <span className="mx-1 h-5 w-px bg-subtle" aria-hidden />
           <IconBtn title="Удалить" danger onClick={() => setDeleteConfirm(true)}>
             <Trash2 className="h-4 w-4" />
           </IconBtn>
@@ -292,7 +302,8 @@ function IconBtn({
         onClick();
       }}
       className={cn(
-        'flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-fg-muted transition-colors',
+        // v2 §4.2: иконка-действие 28px, muted → fg + фон-круг panel-raised
+        'flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-fg-muted transition-colors duration-[120ms]',
         danger ? 'hover:border-short/40 hover:bg-short-dim hover:text-short' : 'hover:border-subtle hover:bg-panel-raised hover:text-fg',
       )}
     >

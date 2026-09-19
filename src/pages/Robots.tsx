@@ -4,9 +4,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bot, NotebookText, Plus } from 'lucide-react';
+import { NotebookText, Plus } from 'lucide-react';
 import type { Robot, RobotStrategy } from '@/types/robot';
 import EmptyState from '@/components/EmptyState';
+import PageHeader from '@/components/PageHeader';
+import SectionTitle from '@/components/SectionTitle';
 import StatCard from '@/components/StatCard';
 import { cn } from '@/lib/utils';
 import { formatRub, formatSignedRub } from '@/lib/format';
@@ -84,55 +86,59 @@ export default function Robots() {
   };
 
   const showActiveSection = tab === 'active' || tab === 'all';
-  const showTemplates = tab === 'templates' || tab === 'all';
+  // v2 §5.3.8: при пустом каталоге шаблоны видны сразу под empty-state (даже на mobile-табе «Активные»)
+  const showTemplates = tab === 'templates' || tab === 'all' || robots.length === 0;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="mx-auto w-full max-w-[1440px] space-y-6 px-3 py-4 md:px-6 md:py-6"
+      className="space-y-4 lg:space-y-5"
     >
-      {/* ===== Шапка ===== */}
-      <header className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-[22px] font-extrabold leading-7 tracking-[-0.02em] text-fg md:text-[28px] md:leading-[34px]">
-            Торговые роботы
-          </h1>
-          <p className="mt-0.5 text-xs text-fg-secondary md:text-sm">
+      {/* ===== Шапка (PageHeader v2) ===== */}
+      <PageHeader
+        group="Автоматика"
+        title="Торговые роботы"
+        subtitle={
+          <>
             <span className="mono">{active.length}</span> активных · <span className="mono">{inactive.length}</span>{' '}
             на паузе/выключено
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => navigate('/journal')}
-          className="hidden h-10 items-center gap-2 rounded-[10px] border border-subtle px-4 text-sm font-medium text-fg-secondary transition-colors hover:border-strong hover:text-fg md:flex"
-        >
-          <NotebookText className="h-4 w-4" />
-          Журнал роботов
-        </button>
-        <button
-          type="button"
-          onClick={() => openWizard('grid')}
-          className="hidden h-10 items-center gap-2 rounded-[10px] bg-yellow px-4 text-sm font-bold text-app transition-shadow hover:glow-accent md:flex"
-        >
-          <Plus className="h-4 w-4" />
-          Создать робота
-        </button>
-        {/* Mobile FAB-style */}
-        <button
-          type="button"
-          onClick={() => openWizard('grid')}
-          aria-label="Создать робота"
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-yellow text-app transition-shadow hover:glow-accent md:hidden"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
-      </header>
+          </>
+        }
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => navigate('/journal')}
+              className="hidden h-10 items-center gap-2 rounded-[10px] border border-subtle px-4 text-sm font-medium text-fg-secondary transition-colors hover:border-strong hover:bg-panel-raised hover:text-fg md:flex"
+            >
+              <NotebookText className="h-4 w-4" />
+              Журнал роботов
+            </button>
+            <button
+              type="button"
+              onClick={() => openWizard('grid')}
+              className="hidden h-10 items-center gap-2 rounded-[10px] bg-yellow px-4 text-sm font-bold text-app transition-[box-shadow,filter] hover:glow-accent hover:brightness-[1.06] md:flex"
+            >
+              <Plus className="h-4 w-4" />
+              Создать робота
+            </button>
+            {/* Mobile: primary остаётся круглой кнопкой в шапке */}
+            <button
+              type="button"
+              onClick={() => openWizard('grid')}
+              aria-label="Создать робота"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-yellow text-app transition-shadow hover:glow-accent md:hidden"
+            >
+              <Plus className="h-5 w-5" />
+            </button>
+          </>
+        }
+      />
 
       {/* ===== Сводка (mobile — карусель) ===== */}
-      <section className="flex snap-x gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-4 md:overflow-visible md:pb-0">
+      <section className="flex snap-x gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-4 md:gap-4 md:overflow-visible md:pb-0 lg:gap-5">
         <motion.div
           className="min-w-[220px] snap-start md:min-w-0"
           initial={{ opacity: 0, y: 12 }}
@@ -210,26 +216,25 @@ export default function Robots() {
       </div>
 
       {robots.length === 0 ? (
+        /* v2 §5.3.8: пустая страница продаёт шаблоны — CTA-кнопки заменены витриной ниже */
         <EmptyState
           image="/empty-robots.svg"
           imageAlt="Нет роботов"
           title="У вас пока нет роботов"
           subtitle="Создайте первого робота из шаблона — grid для боковика или сигнальный для тренда."
-          actionLabel="Создать робота"
-          onAction={() => openWizard('grid')}
           className="rounded-xl border border-dashed border-subtle py-12"
         />
       ) : (
         <>
           {/* ===== Активные ===== */}
           <section className={cn(showActiveSection ? 'block' : 'hidden', 'md:block')}>
-            <h2 className="mb-3 text-base font-bold text-fg md:text-lg">Активные</h2>
+            <SectionTitle title="Активные" count={active.length} className="mt-0" />
             {active.length === 0 ? (
               <div className="rounded-xl border border-dashed border-subtle p-6 text-center text-sm text-fg-muted">
                 Нет работающих роботов — запустите любого из списка ниже
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 lg:gap-5 xl:grid-cols-3">
                 <AnimatePresence mode="popLayout">
                   {active.map((r, i) => (
                     <RobotCard key={r.id} robot={r} index={i} onEdit={(robot) => openWizard(robot.strategy, robot)} />
@@ -242,8 +247,8 @@ export default function Robots() {
           {/* ===== На паузе / выключенные ===== */}
           {inactive.length > 0 && (
             <section className={cn(tab === 'all' ? 'block' : 'hidden', 'md:block')}>
-              <h2 className="mb-3 text-base font-bold text-fg md:text-lg">На паузе / выключенные</h2>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <SectionTitle title="На паузе / выключенные" count={inactive.length} />
+              <div className="grid gap-4 md:grid-cols-2 lg:gap-5 xl:grid-cols-3">
                 <AnimatePresence mode="popLayout">
                   {inactive.map((r, i) => (
                     <RobotCard key={r.id} robot={r} index={i} onEdit={(robot) => openWizard(robot.strategy, robot)} />
@@ -257,11 +262,8 @@ export default function Robots() {
 
       {/* ===== Шаблоны стратегий ===== */}
       <section className={cn(showTemplates ? 'block' : 'hidden', 'md:block')}>
-        <h2 className="mb-3 flex items-center gap-2 text-base font-bold text-fg md:text-lg">
-          <Bot className="h-5 w-5 text-yellow" strokeWidth={1.8} />
-          Шаблоны стратегий
-        </h2>
-        <div className="grid gap-4 md:grid-cols-2">
+        <SectionTitle title="Шаблоны стратегий" />
+        <div className="grid gap-4 md:grid-cols-2 lg:gap-5">
           <TemplateCard strategy="grid" index={0} onUse={(s) => openWizard(s)} />
           <TemplateCard strategy="signal" index={1} onUse={(s) => openWizard(s)} />
         </div>

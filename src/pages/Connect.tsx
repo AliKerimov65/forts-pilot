@@ -16,15 +16,20 @@ import {
   RefreshCw,
   ShieldCheck,
   Unplug,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ApiError } from '@/lib/tinvest/client';
 import { getAccounts, openSandboxAccount, sandboxPayIn } from '@/lib/tinvest/services';
 import { useConnectionStore, maskedToken, selectIsConnected } from '@/store/connection';
 import type { AppMode } from '@/types/account';
+import AnchorChips from '@/components/AnchorChips';
 import Badge from '@/components/Badge';
 import ConfirmDangerModal from '@/components/ConfirmDangerModal';
+import EmptyState from '@/components/EmptyState';
 import InstallPrompt from '@/components/InstallPrompt';
+import PageHeader from '@/components/PageHeader';
+import SectionTitle from '@/components/SectionTitle';
 import AccountPicker from '@/components/connect/AccountPicker';
 import ModeCards from '@/components/connect/ModeCards';
 import OfflineScreen from '@/components/connect/OfflineScreen';
@@ -211,11 +216,11 @@ function WizardView() {
               transition={{ delay: 0.35 + idx * 0.12, duration: 0.3 }}
               className="relative"
             >
-              {/* соединительная линия */}
+              {/* соединительная линия 2px (design-v2.md 5.7.1) */}
               {idx < STEPS.length - 1 && (
-                <span className="absolute bottom-0 left-[19px] top-10 w-px bg-subtle">
+                <span className="absolute bottom-0 left-[18.5px] top-10 w-0.5 rounded-full bg-subtle">
                   <motion.span
-                    className="block w-px bg-yellow"
+                    className="block w-0.5 rounded-full bg-long"
                     initial={{ height: 0 }}
                     animate={{ height: done ? '100%' : 0 }}
                     transition={{ duration: 0.3 }}
@@ -230,13 +235,14 @@ function WizardView() {
                   done && !current ? 'cursor-pointer' : 'cursor-default',
                 )}
               >
+                {/* Пройденный — text-long + галочка, активный — text-yellow, будущий — muted (5.7.1) */}
                 <span
                   className={cn(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-sm font-bold transition-colors',
                     done
-                      ? 'border-yellow bg-yellow text-app'
+                      ? 'border-long bg-long-dim text-long'
                       : current
-                        ? 'border-yellow text-yellow'
+                        ? 'border-yellow bg-yellow-glow text-yellow'
                         : 'border-subtle text-fg-muted',
                   )}
                 >
@@ -249,7 +255,12 @@ function WizardView() {
                   )}
                 </span>
                 <span>
-                  <span className={cn('block text-sm font-bold', current || done ? 'text-fg' : 'text-fg-muted')}>
+                  <span
+                    className={cn(
+                      'block text-sm font-bold',
+                      done ? 'text-long' : current ? 'text-yellow' : 'text-fg-muted',
+                    )}
+                  >
                     {s.title}
                   </span>
                   <span className="block text-xs text-fg-secondary">{s.hint}</span>
@@ -385,7 +396,15 @@ interface LogEntry {
   id: number;
   time: number;
   text: string;
+  /** Иконка состояния строки журнала (design-v2.md 5.7.7) */
+  kind: 'ok' | 'err' | 'info';
 }
+
+const LOG_ICON: Record<LogEntry['kind'], { icon: typeof Check; cls: string }> = {
+  ok: { icon: Check, cls: 'text-long' },
+  err: { icon: X, cls: 'text-short' },
+  info: { icon: RefreshCw, cls: 'text-info' },
+};
 
 function ConnectedView() {
   const token = useConnectionStore((s) => s.token);
@@ -404,12 +423,17 @@ function ConnectedView() {
   const [installKey, setInstallKey] = useState(0);
   const [installMounted, setInstallMounted] = useState(false);
   const [log, setLog] = useState<LogEntry[]>(() => [
-    { id: Date.now(), time: Date.now(), text: token ? 'Подключено к T-Invest API' : 'Демо-режим активирован' },
+    {
+      id: Date.now(),
+      time: Date.now(),
+      text: token ? 'Подключено к T-Invest API' : 'Демо-режим активирован',
+      kind: 'ok',
+    },
   ]);
   const revealTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
-  const addLog = useCallback((text: string) => {
-    setLog((l) => [{ id: Date.now() + Math.random(), time: Date.now(), text }, ...l].slice(0, 20));
+  const addLog = useCallback((text: string, kind: LogEntry['kind'] = 'info') => {
+    setLog((l) => [{ id: Date.now() + Math.random(), time: Date.now(), text, kind }, ...l].slice(0, 20));
   }, []);
 
   useEffect(() => () => clearInterval(revealTimer.current), []);
@@ -422,7 +446,7 @@ function ConnectedView() {
     setTesting(true);
     const ok = await useConnectionStore.getState().testConnection();
     setTesting(false);
-    addLog(ok ? 'Проверка соединения — успешно' : 'Проверка соединения — ошибка API');
+    addLog(ok ? 'Проверка соединения — успешно' : 'Проверка соединения — ошибка API', ok ? 'ok' : 'err');
     toast(ok ? 'Соединение в норме' : 'API не отвечает', {
       details: ok ? `задержка ${useConnectionStore.getState().latencyMs ?? '—'}мс` : 'проверьте токен и сеть',
       variant: ok ? 'success' : 'error',
@@ -432,7 +456,7 @@ function ConnectedView() {
   const switchAccount = (id: string) => {
     useConnectionStore.getState().setAccount(id);
     const a = accounts.find((x) => x.id === id);
-    addLog(`Счёт изменён: ${a?.name ?? id}`);
+    addLog(`Счёт изменён: ${a?.name ?? id}`, 'ok');
     toast('Счёт изменён', { details: `${a?.name ?? ''} •…${id.slice(-4)}`, variant: 'success' });
   };
 
@@ -457,7 +481,7 @@ function ConnectedView() {
     setPayingIn(true);
     try {
       await sandboxPayIn(accountId, 100_000);
-      addLog('Песочница пополнена на 100 000 ₽');
+      addLog('Песочница пополнена на 100 000 ₽', 'ok');
       toast('Песочница пополнена', { details: '+100 000 ₽', variant: 'success' });
     } catch (e) {
       toast('Не удалось пополнить', { details: apiErrorText(e), variant: 'error' });
@@ -498,13 +522,33 @@ function ConnectedView() {
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 py-2">
-      <h1 className="text-[22px] font-extrabold leading-7 tracking-tight text-fg sm:text-[28px] sm:leading-[34px]">
-        Подключение
-      </h1>
+    <div className="mx-auto w-full max-w-3xl space-y-4 py-2 lg:space-y-5">
+      {/* Шапка v2 (PageHeader, группа «Система») */}
+      <PageHeader
+        group="Система"
+        title="Подключение"
+        subtitle={
+          currentAccount
+            ? `${currentAccount.name} · ${mode === 'live' ? 'боевой режим' : 'песочница'}`
+            : isDemo
+              ? 'Демо-режим · mock-данные'
+              : 'Управление API-подключением'
+        }
+      />
 
-      {/* Карточка статуса */}
-      <section className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
+      {/* Якоря-чипы секций (mobile, design-v2.md 5.7.6) */}
+      <AnchorChips
+        anchors={[
+          { id: 'connect-status', label: 'Статус' },
+          ...(token ? [{ id: 'connect-accounts', label: 'Счета' }] : []),
+          { id: 'connect-mode', label: 'Режим' },
+          { id: 'connect-security', label: 'Безопасность' },
+          { id: 'connect-log', label: 'Журнал' },
+        ]}
+      />
+
+      {/* Карточка статуса — L2 (design-v2.md 5.7.5) */}
+      <section id="connect-status" className="rounded-xl border border-subtle bg-panel-raised p-4 shadow-raised sm:p-5">
         <div className="flex flex-wrap items-center gap-3">
           <span
             className={cn(
@@ -513,7 +557,7 @@ function ConnectedView() {
             )}
           />
           <div className="min-w-0 flex-1">
-            <div className="text-base font-bold text-fg">
+            <div className="text-base font-semibold leading-[22px] text-fg">
               {isDemo ? 'Демо-режим (mock-данные)' : online ? 'Подключено к T-Invest API' : 'Нет соединения с API'}
             </div>
             <div className="mono mt-0.5 text-xs text-fg-secondary">
@@ -540,13 +584,14 @@ function ConnectedView() {
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        {/* Действия: в ряд на desktop, в столбец full-width на mobile (design-v2.md 5.7.5) */}
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {token && (
             <button
               type="button"
               onClick={retest}
               disabled={testing}
-              className="flex h-10 items-center gap-2 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg transition-colors hover:border-strong disabled:opacity-60"
+              className="flex h-10 items-center justify-center gap-2 rounded-[10px] border border-subtle bg-panel px-4 text-sm font-semibold text-fg transition-colors hover:border-strong hover:bg-inset disabled:opacity-60"
             >
               {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Проверить соединение
@@ -555,14 +600,14 @@ function ConnectedView() {
           <button
             type="button"
             onClick={() => scrollTo('connect-accounts')}
-            className="h-10 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:text-fg"
+            className="flex h-10 items-center justify-center rounded-[10px] border border-subtle bg-panel px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:bg-inset hover:text-fg"
           >
             Сменить счёт
           </button>
           <button
             type="button"
             onClick={() => scrollTo('connect-mode')}
-            className="h-10 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:text-fg"
+            className="flex h-10 items-center justify-center rounded-[10px] border border-subtle bg-panel px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:bg-inset hover:text-fg"
           >
             Сменить режим
           </button>
@@ -571,7 +616,7 @@ function ConnectedView() {
               type="button"
               onClick={payIn}
               disabled={payingIn || !accountId}
-              className="flex h-10 items-center gap-2 rounded-[10px] border border-info/40 px-4 text-sm font-semibold text-info transition-colors hover:bg-[rgba(59,130,246,0.10)] disabled:opacity-60"
+              className="flex h-10 items-center justify-center gap-2 rounded-[10px] border border-info/40 px-4 text-sm font-semibold text-info transition-colors hover:bg-[rgba(59,130,246,0.10)] disabled:opacity-60"
             >
               {payingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Coins className="h-4 w-4" />}
               Пополнить песочницу
@@ -580,7 +625,7 @@ function ConnectedView() {
           <button
             type="button"
             onClick={() => setConfirmDisconnect(true)}
-            className="flex h-10 items-center gap-2 rounded-[10px] border border-short px-4 text-sm font-semibold text-short transition-colors hover:bg-short-dim"
+            className="flex h-10 items-center justify-center gap-2 rounded-[10px] border border-short/50 px-4 text-sm font-semibold text-short transition-colors hover:border-short hover:bg-short-dim"
           >
             <Unplug className="h-4 w-4" />
             {token ? 'Отключить токен' : 'Выйти из демо'}
@@ -591,7 +636,7 @@ function ConnectedView() {
       {/* Счета */}
       {token && (
         <section id="connect-accounts" className="scroll-mt-4 rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">Счета</h2>
+          <SectionTitle title="Счета" count={accounts.length || undefined} className="mt-0" />
           {accounts.length === 0 ? (
             <p className="text-sm text-fg-secondary">
               Счета не найдены.{' '}
@@ -607,13 +652,13 @@ function ConnectedView() {
 
       {/* Режим */}
       <section id="connect-mode" className="scroll-mt-4 rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">Режим</h2>
+        <SectionTitle title="Режим" className="mt-0" />
         <ModeCards value={mode} onChange={switchMode} />
       </section>
 
       {/* Безопасность */}
-      <section className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">Безопасность</h2>
+      <section id="connect-security" className="scroll-mt-4 rounded-xl border border-subtle bg-panel p-4 sm:p-5">
+        <SectionTitle title="Безопасность" className="mt-0" />
         <div className="space-y-3">
           <PinSettings />
           {token && (
@@ -629,7 +674,7 @@ function ConnectedView() {
                     {revealLeft > 0 ? token : maskedToken(token)}
                   </motion.div>
                   {revealLeft > 0 && (
-                    <div className="mono mt-1 text-[11px] text-warn">скроется через {revealLeft}с</div>
+                    <div className="mono mt-1 text-[11px] text-warn">скроется через {revealLeft} с</div>
                   )}
                 </div>
                 <button
@@ -638,7 +683,11 @@ function ConnectedView() {
                   disabled={revealLeft > 0}
                   className="h-10 shrink-0 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:text-fg disabled:opacity-50"
                 >
-                  Показать токен
+                  {revealLeft > 0 ? (
+                    <span className="mono text-xs">скроется через {revealLeft} с</span>
+                  ) : (
+                    'Показать токен'
+                  )}
                 </button>
               </div>
             </div>
@@ -672,26 +721,37 @@ function ConnectedView() {
         </button>
       </section>
 
-      {/* Журнал соединения */}
-      <section className="rounded-xl border border-subtle bg-panel p-4 sm:p-5">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-fg-secondary">
-          Журнал соединения
-        </h2>
-        <ul className="space-y-1.5">
-          <AnimatePresence initial={false}>
-            {log.map((e) => (
-              <motion.li
-                key={e.id}
-                initial={{ opacity: 0, y: -12 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex items-baseline gap-3 text-sm"
-              >
-                <span className="mono shrink-0 text-xs text-fg-muted">{formatTime(e.time)}</span>
-                <span className="text-fg-secondary">{e.text}</span>
-              </motion.li>
-            ))}
-          </AnimatePresence>
-        </ul>
+      {/* Журнал соединения: строки 40px с иконками состояния, время mono справа (design-v2.md 5.7.7) */}
+      <section id="connect-log" className="scroll-mt-4 rounded-xl border border-subtle bg-panel p-4 sm:p-5">
+        <SectionTitle title="Журнал соединения" count={log.length || undefined} className="mt-0" />
+        {log.length === 0 ? (
+          <EmptyState
+            compact
+            icon={<RefreshCw className="h-6 w-6" strokeWidth={1.5} />}
+            title="Событий пока нет"
+            subtitle="Здесь появятся проверки соединения, смена счёта и режима"
+          />
+        ) : (
+          <ul className="divide-y divide-subtle/60">
+            <AnimatePresence initial={false}>
+              {log.map((e) => {
+                const { icon: LogIcon, cls } = LOG_ICON[e.kind];
+                return (
+                  <motion.li
+                    key={e.id}
+                    initial={{ opacity: 0, y: -12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex h-10 items-center gap-3 text-sm"
+                  >
+                    <LogIcon className={cn('h-3.5 w-3.5 shrink-0', cls)} />
+                    <span className="min-w-0 flex-1 truncate text-fg-secondary">{e.text}</span>
+                    <span className="mono shrink-0 text-xs text-fg-muted">{formatTime(e.time)}</span>
+                  </motion.li>
+                );
+              })}
+            </AnimatePresence>
+          </ul>
+        )}
       </section>
 
       <ConfirmDangerModal

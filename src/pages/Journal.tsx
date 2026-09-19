@@ -6,12 +6,13 @@ import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import Lenis from 'lenis';
 import { useEffect } from 'react';
-import { Bot, CandlestickChart, ChevronDown, Download, Loader2 } from 'lucide-react';
+import { Bot, CandlestickChart, ChevronDown, Download, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTradingStore } from '@/store/trading';
 import { useDashboardData } from '@/hooks/useDashboardData';
 import { formatDateShort, formatNumber } from '@/lib/format';
 import EmptyState from '@/components/EmptyState';
+import PageHeader from '@/components/PageHeader';
 import { ToastHost } from '@/components/monitor/toast';
 import { showToast } from '@/components/monitor/toastBus';
 import JournalSummary from '@/components/journal/JournalSummary';
@@ -34,8 +35,25 @@ import {
   type PeriodKey,
 } from '@/components/journal/journalUtils';
 
-/** SegmentedControl периода (design.md §5) */
-function PeriodControl({ value, onChange }: { value: PeriodKey; onChange: (v: PeriodKey) => void }) {
+/** Чип активного фильтра в строке «Найдено: …» над таблицей (v2 §5.5.2) */
+function ActiveFilterChip({ label, onClear, mono }: { label: string; onClear: () => void; mono?: boolean }) {
+  return (
+    <span className="flex h-6 items-center gap-1 rounded-full border border-yellow/40 bg-yellow-glow px-2 text-[11px] font-semibold text-yellow">
+      <span className={mono ? 'mono uppercase' : undefined}>{label}</span>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Убрать фильтр ${label}`}
+        className="flex h-4 w-4 items-center justify-center rounded-full transition-colors hover:bg-yellow/20"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
+/** SegmentedControl периода (design.md §5); layoutId — уникальный на инстанс (desktop + mobile смонтированы одновременно) */
+function PeriodControl({ value, onChange, layoutId = 'journal-period' }: { value: PeriodKey; onChange: (v: PeriodKey) => void; layoutId?: string }) {
   return (
     <div className="flex rounded-[10px] bg-inset p-0.5">
       {PERIOD_OPTIONS.map((o) => (
@@ -50,7 +68,7 @@ function PeriodControl({ value, onChange }: { value: PeriodKey; onChange: (v: Pe
         >
           {value === o.value && (
             <motion.span
-              layoutId="journal-period"
+              layoutId={layoutId}
               className="absolute inset-0 rounded-lg border-b-2 border-yellow bg-panel-raised"
               transition={{ type: 'spring', stiffness: 400, damping: 32 }}
             />
@@ -110,16 +128,18 @@ export default function Journal() {
     setTimeout(() => {
       const csv = tradesToCsv([...filtered].sort((a, b) => a.time - b.time));
       const stamp = new Date().toISOString().slice(0, 10);
-      downloadCsv(csv, `forts-pilot-journal-${stamp}.csv`);
+      const fileName = `forts-pilot-journal-${stamp}.csv`;
+      downloadCsv(csv, fileName);
       setExporting(false);
-      showToast({ variant: 'success', title: 'Журнал экспортирован', description: `${filtered.length} строк · CSV` });
+      // v2 §5.5.8: честная обратная связь — «Открыть папку» в PWA недоступно
+      showToast({ variant: 'success', title: 'Журнал экспортирован', description: `Файл сохранён: ${fileName}` });
     }, 600);
   };
 
   const hasAnyTrades = enriched.length > 0;
 
   const analytics = (
-    <div className="grid gap-4 lg:grid-cols-12">
+    <div className="grid gap-4 lg:grid-cols-12 lg:gap-5">
       <div className="lg:col-span-7">
         <PnlChart trades={filtered} best={stats.best} worst={stats.worst} onTradeClick={setSelected} />
       </div>
@@ -134,7 +154,7 @@ export default function Journal() {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="space-y-4"
+      className="space-y-4 lg:space-y-5"
       onTouchStart={(e) => {
         if (window.scrollY <= 0) touchStartY.current = e.touches[0].clientY;
       }}
@@ -168,13 +188,12 @@ export default function Journal() {
         />
       </div>
 
-      {/* Шапка */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] font-extrabold leading-7 tracking-[-0.02em] text-fg md:text-[28px] md:leading-[34px]">
-            Журнал сделок
-          </h1>
-          <p className="mt-1 text-xs font-medium text-fg-secondary">
+      {/* Шапка (PageHeader v2; период — в actions на desktop, скролл-чипы под шапкой на mobile) */}
+      <PageHeader
+        group="Учёт и риски"
+        title="Журнал сделок"
+        subtitle={
+          <>
             Всего <span className="mono">{formatNumber(enriched.length)}</span> сделок
             {firstTradeTime !== null && (
               <>
@@ -182,20 +201,29 @@ export default function Journal() {
                 <span className="mono">{formatDateShort(firstTradeTime)}</span>
               </>
             )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <PeriodControl value={period} onChange={setPeriod} />
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting || filtered.length === 0}
-            className="flex h-9 items-center gap-2 rounded-[10px] border border-subtle px-3.5 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:text-fg disabled:opacity-40"
-          >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            Экспорт CSV
-          </button>
-        </div>
+          </>
+        }
+        actions={
+          <>
+            <div className="hidden md:block">
+              <PeriodControl value={period} onChange={setPeriod} />
+            </div>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exporting || filtered.length === 0}
+              className="flex h-10 items-center gap-2 rounded-[10px] border border-subtle px-4 text-sm font-semibold text-fg-secondary transition-colors hover:border-strong hover:bg-panel-raised hover:text-fg disabled:opacity-45"
+            >
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              <span className="hidden sm:inline">Экспорт CSV</span>
+            </button>
+          </>
+        }
+      />
+
+      {/* Mobile: период — строка скролл-чипов под шапкой (v2 §5.5.1) */}
+      <div className="-mx-3 overflow-x-auto px-3 md:hidden">
+        <PeriodControl value={period} onChange={setPeriod} layoutId="journal-period-mobile" />
       </div>
 
       {!hasAnyTrades ? (
@@ -261,7 +289,65 @@ export default function Journal() {
 
           <FilterBar filters={filters} tickers={tickers} onChange={setFilters} foundCount={filtered.length} />
 
-          <TradesList trades={filtered} onOpen={setSelected} filtersActive={filtersActive} onResetFilters={() => setFilters(EMPTY_FILTERS)} />
+          {/* v2 §5.5.2: активные фильтры — отдельной строкой над таблицей */}
+          {filtersActive && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-fg-secondary">
+                Найдено: <span className="mono font-semibold text-fg">{formatNumber(filtered.length)}</span> сделок
+              </span>
+              {filters.instruments.map((t) => (
+                <ActiveFilterChip
+                  key={t}
+                  label={t}
+                  mono
+                  onClear={() => setFilters({ ...filters, instruments: filters.instruments.filter((x) => x !== t) })}
+                />
+              ))}
+              {filters.source !== 'all' && (
+                <ActiveFilterChip
+                  label={filters.source === 'robot' ? 'От роботов' : 'Ручные'}
+                  onClear={() => setFilters({ ...filters, source: 'all' })}
+                />
+              )}
+              {filters.direction !== 'all' && (
+                <ActiveFilterChip
+                  label={filters.direction === 'long' ? 'Лонг' : 'Шорт'}
+                  onClear={() => setFilters({ ...filters, direction: 'all' })}
+                />
+              )}
+              {filters.result !== 'all' && (
+                <ActiveFilterChip
+                  label={filters.result === 'profit' ? 'Прибыльные' : 'Убыточные'}
+                  onClear={() => setFilters({ ...filters, result: 'all' })}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="ml-auto text-xs font-semibold text-fg-muted underline-offset-[3px] transition-colors hover:text-fg hover:underline"
+              >
+                Сбросить
+              </button>
+            </div>
+          )}
+
+          <TradesList
+            trades={filtered}
+            onOpen={setSelected}
+            filtersActive={filtersActive}
+            onResetFilters={() => setFilters(EMPTY_FILTERS)}
+            footerAction={
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exporting || filtered.length === 0}
+                className="flex h-7 items-center gap-1.5 rounded-md border border-subtle px-2.5 text-xs font-semibold text-fg-secondary transition-colors hover:border-strong hover:text-fg disabled:opacity-45"
+              >
+                {exporting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                Экспорт
+              </button>
+            }
+          />
         </>
       )}
 
