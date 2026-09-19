@@ -424,7 +424,9 @@ async function tickRegimeRobot(robot: Robot, price: number, useMock: boolean): P
         reduce: cfg.marginReduce,
         emergency: cfg.marginEmergency,
       });
-    } catch {
+    } catch (e) {
+      // Ошибку маржи не глушим молча — логируем; фолбэк на предыдущее/демо-значение
+      console.warn('[engine] GetMarginAttributes failed, using cached/demo margin', e);
       rt.cacheMargin = rt.cacheMargin ?? assessMargin(demoMarginAttributes(0.35), {
         warn: cfg.marginWarn,
         reduce: cfg.marginReduce,
@@ -569,7 +571,8 @@ async function tickRescueRobot(robot: Robot, price: number, useMock: boolean): P
     try {
       const attrs = useMock ? demoMarginAttributes(0.35) : await getMarginAttributes();
       rt.cacheMargin = assessMargin(attrs, thresholds);
-    } catch {
+    } catch (e) {
+      console.warn('[engine] GetMarginAttributes failed, using cached/demo margin', e);
       rt.cacheMargin = rt.cacheMargin ?? assessMargin(demoMarginAttributes(0.35), thresholds);
     }
   }

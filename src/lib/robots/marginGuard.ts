@@ -51,7 +51,11 @@ export function assessMargin(attrs: MarginAttributes, cfg: MarginGuardConfig = D
   else if (utilization >= cfg.reduce) level = 'reduce';
   else if (utilization >= cfg.warn) level = 'warn';
 
-  return { utilization, level, freeMargin: Math.max(0, liquid - blocked) };
+  // Свободная маржа — из amountOfMarginFunds («запас маржи»); фолбэк — liquid − blocked
+  const freeMargin = Number.isFinite(attrs.amountOfMarginFunds)
+    ? Math.max(0, attrs.amountOfMarginFunds)
+    : Math.max(0, liquid - blocked);
+  return { utilization, level, freeMargin };
 }
 
 /**
@@ -98,6 +102,7 @@ export function demoMarginAttributes(utilization = 0.35): MarginAttributes {
     minimalMargin: startingMargin / 2,
     fundsSufficiencyLevel: u >= 1 ? 0 : (liquidPortfolio - startingMargin) / Math.max(1, startingMargin),
     amountOfMissingFunds: 0,
+    amountOfMarginFunds: Math.max(0, liquidPortfolio - startingMargin),
     correctedMargin: startingMargin * 0.98,
   };
 }

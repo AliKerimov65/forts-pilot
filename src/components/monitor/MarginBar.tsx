@@ -4,11 +4,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUpRight, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatRub, formatSignedRub } from '@/lib/format';
 import PriceTicker from '@/components/PriceTicker';
 import { useRiskStore } from '@/store/risk';
+import type { MarginAttributes } from '@/lib/tinvest/services';
 
 export interface MarginBarProps {
   totalAmount: number;
@@ -17,6 +18,17 @@ export interface MarginBarProps {
   unrealizedPnl: number;
   /** Ликвидный портфель из UsersService/GetMarginAttributes (₽); undefined — данные ещё не загружены */
   liquidPortfolio?: number;
+  /**
+   * Маржинальные атрибуты счёта (UsersService/GetMarginAttributes).
+   * Когда переданы — «Заблокировано» = startingMargin, «Свободная маржа» = amountOfMarginFunds
+   * («запас маржи»), утилизация = startingMargin / liquidPortfolio.
+   */
+  marginAttr?: MarginAttributes | null;
+  /** Ошибка загрузки маржи (НЕ глушим): показываем стейт с причиной и кнопкой «Повторить» */
+  marginError?: string | null;
+  /** Маржинальная торговля не подключена на счёте (API вернуло нули) */
+  marginNotEnabled?: boolean;
+  onMarginRetry?: () => void;
 }
 
 function marginZone(pct: number): 'long' | 'warn' | 'short' {
@@ -53,18 +65,72 @@ function MarginProgress({ pct, className }: { pct: number; className?: string })
   );
 }
 
-export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unrealizedPnl, liquidPortfolio }: MarginBarProps) {
+export default function MarginBar({
+  totalAmount,
+  blockedMargin,
+  freeMargin,
+  unrealizedPnl,
+  liquidPortfolio,
+  marginAttr,
+  marginError,
+  marginNotEnabled,
+  onMarginRetry,
+}: MarginBarProps) {
   const [open, setOpen] = useState(false);
   const maxMarginPct = useRiskStore((s) => s.limits.maxMarginPct);
-  const pct = totalAmount > 0 ? (blockedMargin / totalAmount) * 100 : 0;
+  // С атрибутами маржи — точные значения из GetMarginAttributes (UsersService);
+  // без них — фолбэк на агрегаты портфеля (сумма varMargin позиций / кэш).
+  const liquid = marginAttr ? marginAttr.liquidPortfolio : liquidPortfolio;
+  const blocked = marginAttr ? Math.max(0, marginAttr.startingMargin) : blockedMargin;
+  const free = marginAttr ? Math.max(0, marginAttr.amountOfMarginFunds) : freeMargin;
+  const pct = marginAttr
+    ? marginAttr.liquidPortfolio > 0
+      ? (Math.max(0, marginAttr.startingMargin) / marginAttr.liquidPortfolio) * 100
+      : marginAttr.amountOfMissingFunds > 0
+        ? 100
+        : 0
+    : totalAmount > 0
+      ? (blockedMargin / totalAmount) * 100
+      : 0;
   const zone = marginZone(pct);
+
+  // Явные стейты маржи: ошибка API (с повтором) / маржинальная торговля не подключена
+  const marginNotice = marginError ? (
+    <div className="mb-3 flex items-center gap-2 rounded-lg border border-warn/40 bg-[rgba(245,165,36,0.1)] px-3 py-2 text-[12px] font-medium text-warn">
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="flex-1">Данные о марже недоступны: {marginError}</span>
+      {onMarginRetry && (
+        <button
+          type="button"
+          onClick={onMarginRetry}
+          className="h-7 shrink-0 rounded-md border border-warn/50 px-3 text-[12px] font-semibold text-warn transition-colors hover:bg-warn/10"
+        >
+          Повторить
+        </button>
+      )}
+    </div>
+  ) : marginNotEnabled ? (
+    <div className="mb-3 flex items-center gap-2 rounded-lg border border-subtle bg-inset px-3 py-2 text-[12px] font-medium text-fg-secondary">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-fg-muted" />
+      <span className="flex-1">Маржинальная торговля не подключена на этом счёте</span>
+      {onMarginRetry && (
+        <button
+          type="button"
+          onClick={onMarginRetry}
+          className="h-7 shrink-0 rounded-md border border-subtle px-3 text-[12px] font-medium text-fg-secondary transition-colors hover:border-strong hover:text-fg"
+        >
+          Обновить
+        </button>
+      )}
+    </div>
+  ) : null;
 
   const cells = [
     { label: 'Стоимость портфеля', value: <PriceTicker value={totalAmount} format={(v) => formatRub(v)} /> },
-    { label: 'Заблокировано ГО', value: formatRub(blockedMargin) },
-    { label: 'Свободная маржа', value: formatRub(freeMargin) },
+    { label: 'Заблокировано', value: formatRub(blocked) },
+    { label: 'Свободная маржа', value: formatRub(free) },
     // Ликвидный портфель — из GetMarginAttributes (UsersService), демо — mock
-    { label: 'Ликвидный портфель', value: liquidPortfolio !== undefined ? formatRub(liquidPortfolio) : '—' },
+    { label: 'Ликвидный портфель', value: liquid !== undefined ? formatRub(liquid) : '—' },
     {
       label: 'Нереализованный P&L',
       value: (
@@ -77,6 +143,7 @@ export default function MarginBar({ totalAmount, blockedMargin, freeMargin, unre
 
   return (
     <section className="rounded-xl border border-subtle bg-panel p-4 md:p-5">
+      {marginNotice}
       {/* Mobile: сворачиваемая плашка */}
       <button
         type="button"

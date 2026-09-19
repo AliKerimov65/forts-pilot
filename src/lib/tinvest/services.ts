@@ -146,6 +146,8 @@ export interface MarginAttributes {
   fundsSufficiencyLevel: number;
   /** Нехватка средств (0 — всё в порядке) */
   amountOfMissingFunds: number;
+  /** Свободные маржинальные средства — «запас маржи» (amountOfMarginFunds) */
+  amountOfMarginFunds: number;
   /** Скорректированная маржа */
   correctedMargin: number;
 }
@@ -160,6 +162,7 @@ export async function getMarginAttributes(): Promise<MarginAttributes> {
     minimalMargin?: MoneyValue;
     fundsSufficiencyLevel?: Quotation;
     amountOfMissingFunds?: MoneyValue;
+    amountOfMarginFunds?: MoneyValue;
     correctedMargin?: MoneyValue;
   }>('UsersService', 'GetMarginAttributes', { accountId }, { token, sandbox });
   return {
@@ -168,6 +171,7 @@ export async function getMarginAttributes(): Promise<MarginAttributes> {
     minimalMargin: quotationToNumber(res.minimalMargin),
     fundsSufficiencyLevel: quotationToNumber(res.fundsSufficiencyLevel),
     amountOfMissingFunds: quotationToNumber(res.amountOfMissingFunds),
+    amountOfMarginFunds: quotationToNumber(res.amountOfMarginFunds),
     correctedMargin: quotationToNumber(res.correctedMargin),
   };
 }

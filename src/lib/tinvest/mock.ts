@@ -271,6 +271,7 @@ export function mockGetMarginAttributes(): {
   minimalMargin: number;
   fundsSufficiencyLevel: number;
   amountOfMissingFunds: number;
+  amountOfMarginFunds: number;
   correctedMargin: number;
 } {
   return {
@@ -279,6 +280,7 @@ export function mockGetMarginAttributes(): {
     minimalMargin: 49_200,
     fundsSufficiencyLevel: 2.6,
     amountOfMissingFunds: 0,
+    amountOfMarginFunds: 1_186_160.35, // liquidPortfolio − startingMargin
     correctedMargin: 96_800,
   };
 }

@@ -52,7 +52,7 @@
 - `findInstrumentAll(query: string): Promise<Instrument[]>` — поиск по ВСЕМ классам (FindInstrument без instrumentKind)
 - `mapInstrumentKind(kind?: string): InstrumentType` — маппинг enum API (`INSTRUMENT_TYPE_*`) → класс
 - `getFuturesMargin(instrumentId): Promise<{buy: number, sell: number}>` — ГО фьючерса
-- `getMarginAttributes(): Promise<MarginAttributes>` — маржа ПО СЧЁТУ (UsersService!): `{liquidPortfolio, startingMargin, minimalMargin, fundsSufficiencyLevel, amountOfMissingFunds, correctedMargin}` (все ₽, кроме fundsSufficiencyLevel)
+- `getMarginAttributes(): Promise<MarginAttributes>` — маржа ПО СЧЁТУ (UsersService!): `{liquidPortfolio, startingMargin, minimalMargin, fundsSufficiencyLevel, amountOfMissingFunds, amountOfMarginFunds, correctedMargin}` (все ₽, кроме fundsSufficiencyLevel). **`amountOfMarginFunds` — свободные маржинальные средства («запас маржи», сколько ещё можно заблокировать под ГО)**; `startingMargin` — заблокированная начальная маржа; утилизация = `startingMargin / liquidPortfolio`. Если маржинальная торговля не подключена — API вернёт ошибку/нули: ошибки НЕ глушить (UI-стейт + retry), нули → «маржинальная торговля не подключена»
 - `getCandles(instrumentId, from: Date, to: Date, interval: CandleInterval, limit?): Promise<Candle[]>`
 - `getOrderBook(instrumentId, depth=20): Promise<OrderBook>` — ⚠️ для индексов стакана нет, не вызывать
 - `getLastPrices(instrumentIds: string[]): Promise<Quote[]>` — работает и для индексов

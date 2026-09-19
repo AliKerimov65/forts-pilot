@@ -14,6 +14,7 @@ import { useMarketStore } from '@/store/market';
 import { useTradingStore } from '@/store/trading';
 import { useRiskStore } from '@/store/risk';
 import { cancelOrder, getMarginAttributes, getOrders, getPortfolio, postOrder, type MarginAttributes } from '@/lib/tinvest/services';
+import { ApiError } from '@/lib/tinvest/client';
 import {
   mockGetFutures,
   mockGetJournalEvents,
@@ -59,6 +60,8 @@ const CLASS_FILTERS: Array<[ClassFilter, string]> = [
   ['currency', 'Валюта'],
   ['bond', 'ОФЗ'],
 ];
+/** Поллинг маржинальных показателей счёта (GetMarginAttributes) — 15с */
+const MARGIN_POLL_MS = 15_000;
 
 export default function Positions() {
   const navigate = useNavigate();
@@ -87,6 +90,8 @@ export default function Positions() {
   const [busyCloseAll, setBusyCloseAll] = useState(false);
   // Маржинальные показатели счёта (UsersService/GetMarginAttributes; демо — mock)
   const [marginAttr, setMarginAttr] = useState<MarginAttributes | null>(null);
+  // Ошибка загрузки маржи — НЕ глушим: явный стейт в MarginBar + «Повторить»
+  const [marginError, setMarginError] = useState<string | null>(null);
   const metaMap = useInstrumentMetaMap();
 
   // Локальные демо-настройки (refs, чтобы поллинг видел свежие значения)
@@ -141,7 +146,6 @@ export default function Positions() {
       const blocked = Math.max(positionsMargin, p.blockedMargin * 0.6);
       t.setPortfolio({ ...p, blockedMargin: blocked, totalAmount: p.totalAmount + jitter, dayPnl: p.dayPnl + jitter });
       useRiskStore.getState().setCurrents(p.dayPnl + jitter, (blocked / p.totalAmount) * 100);
-      setMarginAttr(mockGetMarginAttributes());
       setStreamLost(false);
       setLastUpdated(Date.now());
       return;
@@ -166,10 +170,6 @@ export default function Positions() {
       useRiskStore
         .getState()
         .setCurrents(pf.dayPnl, pf.totalAmount > 0 ? (pf.blockedMargin / pf.totalAmount) * 100 : 0);
-      // Маржа по счёту (UsersService) — необязательная, ошибка не роняет поток
-      getMarginAttributes()
-        .then(setMarginAttr)
-        .catch(() => {});
       setStreamLost(false);
       setLastUpdated(Date.now());
     } catch {
@@ -193,8 +193,37 @@ export default function Positions() {
     }
   }, [useMock]);
 
+  // ----- поллинг маржи счёта (15с): отдельный источник, ошибки НЕ глушим -----
+  const fetchMargin = useCallback(async () => {
+    if (useMock) {
+      setMarginAttr(mockGetMarginAttributes());
+      setMarginError(null);
+      return;
+    }
+    try {
+      const attrs = await getMarginAttributes();
+      setMarginAttr(attrs);
+      setMarginError(null);
+    } catch (e) {
+      // Детали ApiError — в консоль (статус/код/tracking-id), причина — в UI
+      if (e instanceof ApiError) {
+        console.error('[margin] GetMarginAttributes failed', {
+          status: e.status,
+          code: e.code,
+          message: e.message,
+          description: e.description,
+          trackingId: e.trackingId,
+        });
+      } else {
+        console.error('[margin] GetMarginAttributes failed', e);
+      }
+      setMarginError(e instanceof Error ? e.message : String(e));
+    }
+  }, [useMock]);
+
   usePolling(fetchPositions, { intervalMs: POLLING_DEFAULTS.positions, enabled: connected });
   usePolling(fetchOrders, { intervalMs: POLLING_DEFAULTS.positions, enabled: connected && !useMock });
+  usePolling(fetchMargin, { intervalMs: MARGIN_POLL_MS, enabled: connected });
 
   // ----- объединённый список ордеров -----
   const monitorOrders: MonitorOrder[] = useMemo(() => {
@@ -520,6 +549,16 @@ export default function Positions() {
     />
   );
 
+  // Маржинальная торговля не подключена: API ответило, но все показатели нулевые
+  const marginNotEnabled =
+    !useMock &&
+    !marginError &&
+    marginAttr !== null &&
+    marginAttr.liquidPortfolio <= 0 &&
+    marginAttr.startingMargin <= 0 &&
+    marginAttr.amountOfMarginFunds <= 0 &&
+    marginAttr.amountOfMissingFunds <= 0;
+
   const marginBar = (
     <MarginBar
       totalAmount={portfolio?.totalAmount ?? 0}
@@ -527,6 +566,10 @@ export default function Positions() {
       freeMargin={portfolio?.freeMargin ?? 0}
       unrealizedPnl={unrealizedPnl}
       liquidPortfolio={marginAttr?.liquidPortfolio}
+      marginAttr={marginAttr}
+      marginError={marginError}
+      marginNotEnabled={marginNotEnabled}
+      onMarginRetry={() => void fetchMargin()}
     />
   );
 
