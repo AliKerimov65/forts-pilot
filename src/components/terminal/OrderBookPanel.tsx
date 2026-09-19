@@ -2,7 +2,7 @@
 // Тап по цене → подставить в тикет (onPriceClick).
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, LineChart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import EmptyState from '@/components/EmptyState';
 import { useMarketStore } from '@/store/market';
@@ -53,6 +53,7 @@ function Row({
 
 export default function OrderBookPanel({ instrument, depth = 10, onPriceClick, className }: OrderBookPanelProps) {
   const orderBook = useMarketStore((s) => s.orderBook);
+  const isIndex = instrument?.type === 'index';
 
   const { asks, bids, maxQty, spread, spreadPct, totalBid, totalAsk } = useMemo(() => {
     const asks = (orderBook?.asks ?? []).slice(0, depth);
@@ -79,6 +80,16 @@ export default function OrderBookPanel({ instrument, depth = 10, onPriceClick, c
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-secondary">Стакан</span>
         <span className="mono text-[11px] text-fg-muted">{depth}×{depth}</span>
       </div>
+      {isIndex ? (
+        // По индексам стакана нет (CONTRACT.md §Правила 1) — только котировки
+        <EmptyState
+          compact
+          icon={<LineChart className="h-6 w-6" strokeWidth={1.5} />}
+          title="По индексам стакан недоступен"
+          subtitle="Индекс — только котировки: график и последняя цена. Торговля ведётся через фьючерс или ETF на индекс"
+          className="flex-1"
+        />
+      ) : (
       <div className="flex-1 overflow-y-auto p-1.5">
         {/* caption-шапка колонок (v2 §5.2.3) */}
         <div className="flex h-6 items-center justify-between px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-fg-muted">
@@ -113,6 +124,8 @@ export default function OrderBookPanel({ instrument, depth = 10, onPriceClick, c
           />
         )}
       </div>
+      )}
+      {!isIndex && (
       <div className="mono flex justify-between border-t border-subtle px-3 py-1.5 text-[11px] text-fg-muted">
         <span>
           Покупка: <span className="text-long">{totalBid.toLocaleString('ru-RU')}</span>
@@ -121,6 +134,7 @@ export default function OrderBookPanel({ instrument, depth = 10, onPriceClick, c
           Продажа: <span className="text-short">{totalAsk.toLocaleString('ru-RU')}</span>
         </span>
       </div>
+      )}
     </div>
   );
 }

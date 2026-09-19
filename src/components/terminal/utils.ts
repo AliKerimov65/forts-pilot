@@ -1,4 +1,5 @@
 // Утилиты страницы Терминала: таймфреймы, формат цен, агрегация свечей
+import { formatInstrumentPrice } from '@/lib/tinvest/instruments';
 import type { Candle, CandleInterval, Instrument } from '@/types/market';
 
 export interface Timeframe {
@@ -34,10 +35,26 @@ export function roundToStep(price: number, step: number): number {
   return Number((Math.round(price / step) * step).toFixed(d));
 }
 
-/** Формат цены инструмента: "73 412,5" */
+/** Формат цены инструмента: "73 412,5" — шаг цены по minPriceIncrement (formatInstrumentPrice) */
 export function fmtPrice(value: number, ins?: Instrument | null): string {
-  const d = ins ? priceDigits(ins.minPriceIncrement) : 2;
-  return value.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (ins) return formatInstrumentPrice(ins, value);
+  return value.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Символ валюты инструмента (ISO → знак) */
+export function currencySymbol(currency: string): string {
+  switch (currency.toLowerCase()) {
+    case 'rub':
+      return '₽';
+    case 'usd':
+      return '$';
+    case 'eur':
+      return '€';
+    case 'cny':
+      return '¥';
+    default:
+      return currency.toUpperCase();
+  }
 }
 
 /** Тикер с экспирацией: Si + 2025-12-15 → "Si-12.25" */
@@ -48,20 +65,6 @@ export function futuresLabel(ins: Instrument): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yy = String(d.getFullYear() % 100).padStart(2, '0');
   return `${ins.ticker}-${mm}.${yy}`;
-}
-
-export type InstrumentCategory = 'all' | 'index' | 'currency' | 'commodity' | 'fav';
-
-const INDEX_RE = /IMOEX|RTS|индекс/i;
-const CURRENCY_RE = /Si$|USD|EUR|CNY|юан|евро|доллар/i;
-const COMMODITY_RE = /BR$|GOLD|SILV|NG$|нефт|золот|серебр|газ/i;
-
-export function categoryOf(ins: Instrument): 'index' | 'currency' | 'commodity' | 'other' {
-  const s = `${ins.ticker} ${ins.name} ${ins.basicAsset}`;
-  if (INDEX_RE.test(s)) return 'index';
-  if (CURRENCY_RE.test(s)) return 'currency';
-  if (COMMODITY_RE.test(s)) return 'commodity';
-  return 'other';
 }
 
 /** Агрегация свечей в крупный таймфрейм (для 4ч из часовых) */

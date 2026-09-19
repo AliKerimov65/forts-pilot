@@ -1,15 +1,17 @@
 // Торговый тикет: Купить/Продать, тип ордера, цена/лоты со степперами,
-// расчёт ГО/объёма, SL/TP-блок с R:R (terminal.md §2.4)
+// расчёт ГО (фьючерсы) / стоимости (акции/ETF/валюты), SL/TP-блок с R:R (terminal.md §2.4)
+// Индексы и неторгуемые инструменты — тикет заблокирован (CONTRACT.md: только котировки).
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bot, ChevronDown, Minus, Plus } from 'lucide-react';
+import { AlertTriangle, Ban, Bot, ChevronDown, Minus, Plus } from 'lucide-react';
 import { Link } from 'react-router';
 import { cn } from '@/lib/utils';
 import { useMarketStore } from '@/store/market';
+import { isTradable, qtyToUnits } from '@/lib/tinvest/instruments';
 import type { Instrument } from '@/types/market';
 import type { Direction } from '@/types/trading';
 import SegmentedControl from './SegmentedControl';
-import { fmtPrice, futuresLabel, roundToStep } from './utils';
+import { currencySymbol, fmtPrice, futuresLabel, roundToStep } from './utils';
 
 export type TicketOrderType = 'market' | 'limit' | 'best';
 
@@ -40,6 +42,8 @@ export interface TradeTicketProps {
   dirFlash?: { dir: Direction; at: number } | null;
   /** Ref на блок «Лоты» — фокус после выбора инструмента (v2 §5.2.8) */
   lotsRef?: RefObject<HTMLDivElement | null>;
+  /** false → предупреждение «Вне торговой сессии» (getTradingStatus.tradingNow) */
+  tradingNow?: boolean;
   className?: string;
 }
 
@@ -144,6 +148,7 @@ export default function TradeTicket({
   marginSell,
   dirFlash,
   lotsRef,
+  tradingNow,
   className,
 }: TradeTicketProps) {
   const quotes = useMarketStore((s) => s.quotes);
@@ -163,6 +168,14 @@ export default function TradeTicket({
     return () => clearTimeout(t);
   }, [dirFlash]);
 
+  // если шорт недоступен — принудительно возвращаем направление в «Купить»
+  const instrumentUid = instrument?.uid;
+  const shortEnabled = instrument?.shortEnabled;
+  useEffect(() => {
+    if (shortEnabled === false) onChange({ direction: 'long' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrumentUid, shortEnabled]);
+
   const step = instrument?.minPriceIncrement ?? 1;
   const quote = instrument ? quotes[instrument.uid] : undefined;
   const bestBid = orderBook?.bids[0]?.price;
@@ -176,10 +189,20 @@ export default function TradeTicket({
         ? (isBuy ? bestAsk : bestBid) ?? quote?.price ?? null
         : state.price;
 
-  // расчёт ГО / объёма
-  const marginPerLot = isBuy ? (marginBuy ?? instrument?.marginBuy) : (marginSell ?? instrument?.marginSell);
+  // расчёт ГО (только фьючерсы, getFuturesMargin) / стоимости (остальные классы — в валюте инструмента)
+  const tradable = instrument ? isTradable(instrument) : false;
+  const isFuture = instrument?.type === 'future';
+  const marginPerLot = isFuture
+    ? isBuy
+      ? (marginBuy ?? instrument?.marginBuy)
+      : (marginSell ?? instrument?.marginSell)
+    : undefined;
   const marginTotal = marginPerLot !== undefined ? marginPerLot * state.lots : null;
-  const volumeTotal = entry !== null ? entry * state.lots : null;
+  const lot = instrument && instrument.lot > 0 ? instrument.lot : 1;
+  const unitsTotal = instrument ? qtyToUnits(instrument, state.lots) : 0; // лоты × lot → штуки
+  const costTotal = entry !== null ? entry * state.lots * lot : null;
+  const cur = currencySymbol(instrument?.currency ?? 'rub');
+  const shortDisabled = instrument?.shortEnabled === false;
 
   // SL/TP расчёты
   const rr = useMemo(() => {
@@ -212,6 +235,31 @@ export default function TradeTicket({
     ? `${isBuy ? 'Купить' : 'Продать'} ${state.lots} лот${state.lots > 1 ? 'а' : ''} · ${futuresLabel(instrument)}`
     : 'Выберите инструмент';
 
+  // Индекс/неторгуемый инструмент — тикет заблокирован (только котировки; postOrder тоже отклонит)
+  if (instrument && !tradable) {
+    const isIndex = instrument.type === 'index';
+    return (
+      <div className={cn('flex h-full flex-col overflow-y-auto', className)}>
+        <div className="border-b border-subtle px-3 py-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-secondary">Тикет</span>
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-subtle bg-panel text-fg-muted">
+            <Ban className="h-5 w-5" strokeWidth={1.5} />
+          </div>
+          <p className="text-sm font-semibold text-fg">
+            {isIndex ? 'Индекс — только котировки' : 'Торговля недоступна'}
+          </p>
+          <p className="max-w-[240px] text-[12px] leading-[16px] text-fg-secondary">
+            {isIndex
+              ? 'Торговля недоступна: доступны график и котировки. Сделки — через фьючерс или ETF на индекс.'
+              : 'Инструмент недоступен для торговли через T-Invest API.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn('flex h-full flex-col overflow-y-auto', className)}>
       <div className="border-b border-subtle px-3 py-2">
@@ -220,26 +268,40 @@ export default function TradeTicket({
       <div className="flex-1 space-y-3 p-3">
         {/* Купить / Продать */}
         <div className="grid grid-cols-2 gap-2">
-          {(['long', 'short'] as const).map((d) => (
-            <motion.button
-              key={d}
-              type="button"
-              whileTap={{ scale: 0.97 }}
-              onClick={() => onChange({ direction: d })}
-              className={cn(
-                'h-10 rounded-[10px] text-sm font-bold transition-[colors,box-shadow] duration-200',
-                state.direction === d
-                  ? d === 'long'
-                    ? 'bg-long text-app'
-                    : 'bg-short text-white'
-                  : 'border border-subtle text-fg-muted hover:text-fg-secondary',
-                flashDir === d && 'shadow-[0_0_0_3px_rgba(255,221,45,0.45)]',
-              )}
-            >
-              {d === 'long' ? 'Купить' : 'Продать'}
-            </motion.button>
-          ))}
+          {(['long', 'short'] as const).map((d) => {
+            const disabled = d === 'short' && shortDisabled;
+            return (
+              <motion.button
+                key={d}
+                type="button"
+                whileTap={disabled ? undefined : { scale: 0.97 }}
+                disabled={disabled}
+                title={disabled ? 'Шорт недоступен по инструменту' : undefined}
+                onClick={() => onChange({ direction: d })}
+                className={cn(
+                  'h-10 rounded-[10px] text-sm font-bold transition-[colors,box-shadow] duration-200',
+                  state.direction === d
+                    ? d === 'long'
+                      ? 'bg-long text-app'
+                      : 'bg-short text-white'
+                    : 'border border-subtle text-fg-muted hover:text-fg-secondary',
+                  flashDir === d && 'shadow-[0_0_0_3px_rgba(255,221,45,0.45)]',
+                  disabled && 'cursor-not-allowed opacity-45',
+                )}
+              >
+                {d === 'long' ? 'Купить' : 'Продать'}
+              </motion.button>
+            );
+          })}
         </div>
+
+        {/* Предупреждение: инструмент сейчас не торгуется (getTradingStatus.tradingNow === false) */}
+        {tradingNow === false && (
+          <div className="flex items-center gap-2 rounded-[8px] border border-warn/40 bg-[rgba(245,165,36,0.08)] px-2.5 py-2 text-[11px] font-medium text-warn">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            Вне торговой сессии — заявка будет исполнена при открытии торгов
+          </div>
+        )}
 
         {/* Тип ордера */}
         <SegmentedControl
@@ -288,8 +350,19 @@ export default function TradeTicket({
             <Stepper value={state.lots} onChange={(v) => onChange({ lots: v })} step={1} min={1} />
           </div>
           <div className="mono text-right text-[11px] leading-4 text-fg-muted">
-            {marginTotal !== null && <div>ГО: ≈ {Math.round(marginTotal).toLocaleString('ru-RU')} ₽</div>}
-            {volumeTotal !== null && <div>Объём: ≈ {Math.round(volumeTotal).toLocaleString('ru-RU')} ₽</div>}
+            {lot > 1 && (
+              <div title="Размер лота">
+                {state.lots} × {lot} = {unitsTotal.toLocaleString('ru-RU')} шт
+              </div>
+            )}
+            {/* ГО — только фьючерсы; остальные классы — стоимость позиции в валюте инструмента */}
+            {isFuture && marginTotal !== null && <div>ГО: ≈ {Math.round(marginTotal).toLocaleString('ru-RU')} ₽</div>}
+            {!isFuture && costTotal !== null && (
+              <div title="Стоимость = цена × лоты × lot">
+                Стоимость: ≈ {Math.round(costTotal).toLocaleString('ru-RU')} {cur}
+              </div>
+            )}
+            {!isFuture && instrument?.type === 'bond' && <div>цена в % от номинала</div>}
           </div>
         </div>
 
@@ -410,7 +483,12 @@ export default function TradeTicket({
         <motion.button
           type="button"
           whileTap={{ scale: 0.97 }}
-          disabled={!instrument || submitting || (state.orderType === 'limit' && state.price === null)}
+          disabled={
+            !instrument ||
+            submitting ||
+            (state.direction === 'short' && shortDisabled) ||
+            (state.orderType === 'limit' && state.price === null)
+          }
           onClick={onSubmit}
           className={cn(
             'mono h-11 w-full rounded-[10px] text-sm font-semibold transition-[colors,filter] duration-200 disabled:opacity-45',

@@ -6,23 +6,31 @@ import { useMarketStore } from '@/store/market';
 import { useTradingStore } from '@/store/trading';
 import { useRobotsStore } from '@/store/robots';
 import {
-  findInstrument,
+  findInstrumentAll,
+  getBonds,
   getCandles,
+  getCurrencies,
+  getEtfs,
   getFutures,
   getFuturesMargin,
+  getIndices,
   getLastPrices,
   getOrderBook,
   getOrders,
   getPositions,
+  getShares,
+  getTradingStatus,
+  type TradingStatusInfo,
 } from '@/lib/tinvest/services';
 import {
-  mockFindInstrument,
+  mockFindInstrumentAll,
+  mockGetAllInstruments,
   mockGetCandles,
-  mockGetFutures,
   mockGetLastPrices,
   mockGetOrderBook,
   mockGetPositions,
   mockGetRobots,
+  mockGetTradingStatus,
   mockGetTrades,
 } from '@/lib/tinvest/mock';
 import { POLLING_DEFAULTS, usePolling } from '@/lib/tinvest/polling';
@@ -47,9 +55,11 @@ export interface TerminalData {
   dayHigh?: number;
   /** ГО выбранного инструмента (₽/лот), подтянуто через getFuturesMargin если нет в инструменте */
   margin: { buy?: number; sell?: number };
-  /** Поиск по API (findInstrument) */
+  /** Поиск по API по всем классам (findInstrumentAll) */
   searchRemote: (q: string) => void;
   remoteResults: Instrument[];
+  /** Торговый статус выбранного инструмента (getTradingStatus); null пока не загружен */
+  tradingStatus: TradingStatusInfo | null;
 }
 
 export function useTerminalData(timeframe: Timeframe): TerminalData {
@@ -69,6 +79,7 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
   const [candlesLoading, setCandlesLoading] = useState(false);
   const [remoteResults, setRemoteResults] = useState<Instrument[]>([]);
   const [margin, setMargin] = useState<{ buy?: number; sell?: number }>({});
+  const [tradingStatus, setTradingStatus] = useState<TradingStatusInfo | null>(null);
 
   const instrument = useMemo(
     () => instruments.find((i) => i.uid === selectedId) ?? instruments[0] ?? null,
@@ -82,14 +93,32 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     if (seededRef.current) return;
     seededRef.current = true;
     (async () => {
-      if (useMarketStore.getState().instruments.length === 0) {
-        if (useMock) setInstruments(mockGetFutures());
-        else {
-          try {
-            setInstruments(await getFutures());
-          } catch {
-            setInstruments(mockGetFutures());
+      // каталог всех классов: акции, фьючерсы, ETF, валюты, ОФЗ + индексы (только котировки)
+      const current = useMarketStore.getState().instruments;
+      const hasAllClasses = current.some((i) => i.type !== 'future'); // миграция со старого списка «только фьючерсы»
+      if (current.length === 0 || !hasAllClasses) {
+        if (useMock) {
+          setInstruments(mockGetAllInstruments());
+        } else {
+          const settled = await Promise.allSettled([
+            getFutures(),
+            getShares(),
+            getEtfs(),
+            getCurrencies(),
+            getBonds(),
+            getIndices(),
+          ]);
+          const merged: Instrument[] = [];
+          const seen = new Set<string>();
+          for (const r of settled) {
+            if (r.status !== 'fulfilled') continue;
+            for (const i of r.value) {
+              if (seen.has(i.uid)) continue;
+              seen.add(i.uid);
+              merged.push(i);
+            }
           }
+          setInstruments(merged.length > 0 ? merged : mockGetAllInstruments());
         }
       }
       // seed позиций/сделок для демо (аналогично useDashboardData)
@@ -142,9 +171,18 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     };
   }, [uid, timeframe, useMock, setCandles]);
 
-  // ---------- ГО выбранного инструмента ----------
+  // ---------- ГО выбранного инструмента (только фьючерсы, getFuturesMargin) ----------
   useEffect(() => {
     if (!uid || !instrument) return;
+    if (instrument.type !== 'future') {
+      // акции/ETF/валюты/облигации — без ГО (расчёт стоимости в тикете); у опционов премия, маржа — если есть в карточке
+      setMargin(
+        instrument.marginBuy !== undefined
+          ? { buy: instrument.marginBuy, sell: instrument.marginSell }
+          : {},
+      );
+      return;
+    }
     if (instrument.marginBuy !== undefined) {
       setMargin({ buy: instrument.marginBuy, sell: instrument.marginSell });
       return;
@@ -201,8 +239,10 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
   usePolling(quotesFetcher, { intervalMs: POLLING_DEFAULTS.prices });
 
   // ---------- поллинг стакана выбранного инструмента (3с) ----------
+  // По индексам стакана нет — не запрашиваем (CONTRACT.md: getOrderBook ⚠️ для индексов)
+  const bookAvailable = Boolean(instrument && instrument.type !== 'index' && instrument.apiTradeAvailable);
   const bookFetcher = useCallback(async () => {
-    if (!uid) return;
+    if (!uid || !bookAvailable) return;
     if (useMock) {
       setOrderBook(mockGetOrderBook(uid, 10));
       return;
@@ -212,8 +252,33 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     } catch {
       setOrderBook(mockGetOrderBook(uid, 10));
     }
-  }, [uid, useMock, setOrderBook]);
-  usePolling(bookFetcher, { intervalMs: POLLING_DEFAULTS.prices, enabled: Boolean(uid) });
+  }, [uid, bookAvailable, useMock, setOrderBook]);
+  usePolling(bookFetcher, { intervalMs: POLLING_DEFAULTS.prices, enabled: Boolean(uid) && bookAvailable });
+
+  // сброс стакана при выборе инструмента без стакана (индекс/недоступен через API)
+  useEffect(() => {
+    if (instrument && !bookAvailable) setOrderBook(null);
+  }, [instrument, bookAvailable, setOrderBook]);
+
+  // ---------- торговый статус выбранного инструмента (getTradingStatus, раз на смену uid) ----------
+  useEffect(() => {
+    if (!uid || !instrument || instrument.type === 'index') {
+      setTradingStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const apply = (s: TradingStatusInfo) => {
+      if (!cancelled) setTradingStatus(s);
+    };
+    if (useMock) {
+      apply(mockGetTradingStatus(uid));
+    } else {
+      getTradingStatus(uid).then(apply).catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, instrument, useMock]);
 
   // ---------- поллинг ордеров/позиций (боевой режим) ----------
   const tradingFetcher = useCallback(async () => {
@@ -241,7 +306,8 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
       }
       searchTimer.current = setTimeout(async () => {
         try {
-          const res = useMock ? mockFindInstrument(query) : await findInstrument(query);
+          // поиск по ВСЕМ классам (дебаунс 400ms)
+          const res = useMock ? mockFindInstrumentAll(query) : await findInstrumentAll(query);
           setRemoteResults(res);
         } catch {
           /* игнорируем */
@@ -295,6 +361,7 @@ export function useTerminalData(timeframe: Timeframe): TerminalData {
     margin,
     searchRemote,
     remoteResults,
+    tradingStatus,
   };
 }
 

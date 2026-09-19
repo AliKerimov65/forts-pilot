@@ -4,6 +4,8 @@ import { Maximize2, Minimize2, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import PriceTicker from '@/components/PriceTicker';
 import { useMarketStore } from '@/store/market';
+import { formatDateShort } from '@/lib/format';
+import { instrumentTypeLabel } from '@/lib/tinvest/instruments';
 import type { Instrument } from '@/types/market';
 import { fmtPrice, futuresLabel } from './utils';
 
@@ -74,6 +76,13 @@ export default function InstrumentPanel({
           <span className={cn('mono font-bold uppercase text-fg', compact ? 'text-sm' : 'text-xl')}>
             {futuresLabel(instrument)}
           </span>
+          {/* бейдж класса + валюта расчётов */}
+          <span className="shrink-0 rounded-[4px] bg-panel-raised px-1.5 py-px text-[9px] font-semibold uppercase leading-[14px] text-fg-secondary">
+            {instrumentTypeLabel(instrument.type)}
+          </span>
+          <span className="mono shrink-0 text-[10px] font-semibold uppercase text-fg-muted">
+            {instrument.currency}
+          </span>
           {!compact && <span className="truncate text-xs text-fg-secondary">{instrument.name}</span>}
         </div>
         {!compact && (
@@ -81,6 +90,10 @@ export default function InstrumentPanel({
             <span>лот {instrument.lot}</span>
             {instrument.marginBuy !== undefined && <span>ГО {Math.round(instrument.marginBuy).toLocaleString('ru-RU')} ₽</span>}
             <span>шаг {fmtPrice(instrument.minPriceIncrement, instrument)}</span>
+            {/* экспирация — для фьючерсов/опционов */}
+            {instrument.expirationDate && !Number.isNaN(Date.parse(instrument.expirationDate)) && (
+              <span>эксп. {formatDateShort(Date.parse(instrument.expirationDate))}</span>
+            )}
           </div>
         )}
       </div>

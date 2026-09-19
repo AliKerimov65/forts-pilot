@@ -14,6 +14,7 @@ import { useConnectionStore } from '@/store/connection';
 import { useMarketStore } from '@/store/market';
 import { useTradingStore } from '@/store/trading';
 import { cancelOrder, postOrder } from '@/lib/tinvest/services';
+import { isTradable } from '@/lib/tinvest/instruments';
 import type { Order, Position, Trade } from '@/types/trading';
 import CandleChart from '@/components/terminal/CandleChart';
 import CenterTabs from '@/components/terminal/CenterTabs';
@@ -76,7 +77,7 @@ export default function Terminal() {
 
   const [timeframe, setTimeframe] = useState<Timeframe>(TIMEFRAMES[1]); // 5м
   const data = useTerminalData(timeframe);
-  const { instrument, candles, candlesLoading, gridRobot, gridLevels, dayLow, dayHigh, margin, useMock } = data;
+  const { instrument, candles, candlesLoading, gridRobot, gridLevels, dayLow, dayHigh, margin, useMock, tradingStatus } = data;
 
   const quotes = useMarketStore((s) => s.quotes);
   const quote = instrument ? quotes[instrument.uid] : undefined;
@@ -169,6 +170,16 @@ export default function Terminal() {
   // ---------- отправка ордера ----------
   const submitOrder = useCallback(async () => {
     if (!instrument || submitting) return;
+    if (!isTradable(instrument)) {
+      toast.error('Торговля недоступна', {
+        description:
+          instrument.type === 'index'
+            ? `Индекс ${instrument.ticker} — только котировки, ордера запрещены`
+            : `Инструмент ${instrument.ticker} недоступен для торговли через API`,
+        classNames: { description: 'mono' },
+      });
+      return;
+    }
     const q = useMarketStore.getState().quotes[instrument.uid];
     const book = useMarketStore.getState().orderBook;
     const isBuy = ticket.direction === 'long';
@@ -256,6 +267,7 @@ export default function Terminal() {
           lots: ticket.lots,
           orderType: ticket.orderType === 'market' ? 'market' : 'limit',
           price: ticket.orderType === 'market' ? undefined : execPrice,
+          instrument, // валидация класса + авто-выбор priceType (currency для акций/ETF/валют)
         });
         upsertOrder({
           orderId: res.orderId,
@@ -350,7 +362,15 @@ export default function Terminal() {
           });
           haptic();
         } else {
-          await postOrder({ instrumentId: p.instrumentId, direction: opposite, lots: p.lots, orderType: 'market' });
+          const posInstrument =
+            useMarketStore.getState().instruments.find((i) => i.uid === p.instrumentId) ?? undefined;
+          await postOrder({
+            instrumentId: p.instrumentId,
+            direction: opposite,
+            lots: p.lots,
+            orderType: 'market',
+            instrument: posInstrument,
+          });
           toast.success(`Заявка на закрытие ${p.ticker} отправлена`);
           haptic();
         }
@@ -484,6 +504,7 @@ export default function Terminal() {
       priceFlashAt={priceFlashAt}
       marginBuy={margin.buy}
       marginSell={margin.sell}
+      tradingNow={tradingStatus?.tradingNow}
       dirFlash={dirFlash}
       lotsRef={lotsRef}
       className="h-full"
@@ -658,8 +679,9 @@ export default function Terminal() {
         )}
 
         {/* Quick Buy/Sell над tabbar (только вкладка График) — v2 §5.2.6:
-            две раздельные кнопки 64×56px, gap 8px, 12px над tabbar (68px) */}
-        {mobileTab === 'chart' && (
+            две раздельные кнопки 64×56px, gap 8px, 12px над tabbar (68px).
+            Для индексов/неторгуемых — скрыты (только котировки) */}
+        {mobileTab === 'chart' && instrument && isTradable(instrument) && (
           <div className="fixed inset-x-0 bottom-[calc(80px+env(safe-area-inset-bottom))] z-30 flex justify-center gap-2">
             <motion.button
               type="button"
@@ -674,12 +696,14 @@ export default function Terminal() {
             </motion.button>
             <motion.button
               type="button"
-              whileTap={{ scale: 0.94 }}
+              whileTap={instrument.shortEnabled === false ? undefined : { scale: 0.94 }}
+              disabled={instrument.shortEnabled === false}
+              title={instrument.shortEnabled === false ? 'Шорт недоступен по инструменту' : undefined}
               onClick={() => {
                 patchTicket({ direction: 'short' });
                 setQuickSheet(true);
               }}
-              className="flex h-14 w-16 items-center justify-center rounded-xl bg-short text-sm font-bold text-white shadow-overlay"
+              className="flex h-14 w-16 items-center justify-center rounded-xl bg-short text-sm font-bold text-white shadow-overlay disabled:opacity-45"
             >
               Продать
             </motion.button>
