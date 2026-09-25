@@ -1,8 +1,9 @@
-// Стор подключения к T-Invest API (zustand + persist в localStorage)
+// Стор подключения к T-Invest API (zustand; токен — в credvault, persist только настройки)
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Account, AppMode, ConnectionStatus } from '@/types/account';
 import { ApiError, callApi, maskToken, setLatencyListener, warmUpConnection } from '@/lib/tinvest/client';
+import { clearCredentials, loadCredentials, loadCredentialsSync, saveCredentials } from '@/lib/credvault';
 import { toast } from '@/components/connect/toast';
 
 interface RawAccount {
@@ -93,11 +94,24 @@ function scheduleWarmUp(): void {
     });
 }
 
+// Гидратация из хранилища ДО создания стора: токен выживает перезагрузку гарантированно
+const bootCredentials = loadCredentialsSync();
+
+/** Записать текущую сессию в хранилище (единственная точка записи — явная, не реактивная) */
+function persistSession(state: { token: string | null; accountId: string | null; mode: AppMode; rememberMe: boolean }): void {
+  if (!state.token) return;
+  if (!state.rememberMe) {
+    clearCredentials();
+    return;
+  }
+  saveCredentials({ token: state.token, accountId: state.accountId, mode: state.mode, savedAt: Date.now() });
+}
+
 export const useConnectionStore = create<ConnectionState>()(
   persist(
     (set, get) => ({
-      token: null,
-      accountId: null,
+      token: bootCredentials?.token ?? null,
+      accountId: bootCredentials?.accountId ?? null,
       accounts: [],
       mode: 'sandbox',
       status: 'offline',
@@ -108,14 +122,26 @@ export const useConnectionStore = create<ConnectionState>()(
       rememberMe: true,
       reconnecting: false,
 
-      setToken: (token) => set({ token, ...(token ? {} : { accountId: null, accounts: [], status: 'offline' as const }) }),
-      setAccount: (accountId) => set({ accountId }),
+      setToken: (token) => {
+        set({ token, ...(token ? {} : { accountId: null, accounts: [], status: 'offline' as const }) });
+        if (!token) clearCredentials();
+        else persistSession(get());
+      },
+      setAccount: (accountId) => {
+        set({ accountId });
+        persistSession(get());
+      },
       setAccounts: (accounts) => set({ accounts }),
       setMode: (mode) => set({ mode }),
       setStatus: (status) => set({ status }),
       setLatency: (latencyMs) => set({ latencyMs }),
       setDemoMode: (demoMode) => set({ demoMode }),
-      setRememberMe: (rememberMe) => set({ rememberMe }),
+      setRememberMe: (rememberMe) => {
+        set({ rememberMe });
+        // Выключили «запоминать» — хранилище очищаем; включили — пишем текущую сессию
+        if (!rememberMe) clearCredentials();
+        else persistSession(get());
+      },
 
       testConnection: async () => {
         const { token, mode } = get();
@@ -137,6 +163,7 @@ export const useConnectionStore = create<ConnectionState>()(
             // если выбранный счёт исчез — берём первый
             accountId: accounts.some((a) => a.id === accountId) ? accountId : (accounts[0]?.id ?? null),
           });
+          persistSession(get());
           scheduleWarmUp();
           return true;
         } catch {
@@ -197,7 +224,8 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      disconnect: () =>
+      disconnect: () => {
+        clearCredentials();
         set({
           token: null,
           accountId: null,
@@ -207,14 +235,13 @@ export const useConnectionStore = create<ConnectionState>()(
           lastLatencyMs: null,
           lastPingAt: null,
           demoMode: false,
-        }),
+        });
+      },
     }),
     {
       name: 'forts-pilot-connection',
-      // Токен и счёт персистятся только при rememberMe; иначе — только в памяти сессии
+      // Токен и счёт хранит credvault (с верификацией записи); здесь — только настройки
       partialize: (s) => ({
-        token: s.rememberMe ? s.token : null,
-        accountId: s.rememberMe ? s.accountId : null,
         mode: s.mode,
         demoMode: s.demoMode,
         rememberMe: s.rememberMe,
@@ -222,6 +249,14 @@ export const useConnectionStore = create<ConnectionState>()(
     },
   ),
 );
+
+// Асинхронная догидратация из IndexedDB-фолбэка (если localStorage был недоступен)
+void loadCredentials().then((c) => {
+  const s = useConnectionStore.getState();
+  if (c && !s.token) {
+    useConnectionStore.setState({ token: c.token, accountId: c.accountId, mode: c.mode });
+  }
+});
 
 // Подписка на метрики latency из API-клиента → статус-точка в TopBar
 setLatencyListener((latencyMs, ok) => {

@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, Check, CheckCircle2, ClipboardPaste, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { probeStorage, type ProbeResult } from '@/lib/credvault';
 import { toast } from '@/components/connect/toast';
 import { useConnectionStore } from '@/store/connection';
 
@@ -33,6 +34,9 @@ export default function TokenStep({ verify }: TokenStepProps) {
   const [shakeNonce, setShakeNonce] = useState(0);
   // «Запомнить на этом устройстве»: по умолчанию включён (persist), выключен — токен только в памяти сессии
   const [remember, setRemember] = useState(() => useConnectionStore.getState().rememberMe);
+  // Проба хранилища ДО ввода токена: если браузер блокирует хранение — предупреждаем заранее
+  const [storageProbe, setStorageProbe] = useState<ProbeResult | null>(null);
+  useEffect(() => setStorageProbe(probeStorage()), []);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Живая валидация формата с debounce 300ms (в обработчике ввода)
@@ -97,6 +101,18 @@ export default function TokenStep({ verify }: TokenStepProps) {
 
   return (
     <div className="space-y-3">
+      {/* Предупреждение о недоступном хранилище — до ввода токена */}
+      {storageProbe && !storageProbe.localStorage && (
+        <div className="flex items-start gap-2 rounded-[10px] border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs text-warn">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {storageProbe.indexedDB
+              ? 'Основное хранилище браузера недоступно — токен будет сохранён в резервном хранилище.'
+              : (storageProbe.reason ?? 'Хранилище недоступно') +
+                ' Токен проживёт только до закрытия вкладки.'}
+          </span>
+        </div>
+      )}
       <motion.div
         key={shakeNonce}
         animate={shakeNonce ? { x: [0, -8, 8, -6, 6, 0] } : undefined}

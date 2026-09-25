@@ -21,6 +21,7 @@ import {
 import { cn } from '@/lib/utils';
 import { ApiError, warmUpConnection } from '@/lib/tinvest/client';
 import { getAccounts, openSandboxAccount, sandboxPayIn } from '@/lib/tinvest/services';
+import { saveCredentials } from '@/lib/credvault';
 import { useConnectionStore, maskedToken, selectIsConnected } from '@/store/connection';
 import type { AppMode } from '@/types/account';
 import AnchorChips from '@/components/AnchorChips';
@@ -103,18 +104,54 @@ function WizardView() {
     const s = useConnectionStore.getState();
     s.setToken(t);
     try {
-      const accs = await getAccounts();
-      s.setAccounts(accs);
-      s.setStatus('online');
-      s.setAccount(accs[0]?.id ?? null);
+      let accs: Awaited<ReturnType<typeof getAccounts>>;
+      try {
+        accs = await getAccounts();
+      } catch (firstErr) {
+        // Токен может быть выпущен под другой контур (боевой↔песочница): при 401/403
+        // автоматически пробуем второй — иначе валидный токен отклонялся и не сохранялся
+        const isAuth = firstErr instanceof ApiError && (firstErr.status === 401 || firstErr.status === 403);
+        if (!isAuth) throw firstErr;
+        const other: AppMode = useConnectionStore.getState().mode === 'sandbox' ? 'live' : 'sandbox';
+        useConnectionStore.getState().setMode(other);
+        try {
+          accs = await getAccounts();
+          toast(other === 'live' ? 'Подключён боевой контур' : 'Подключён контур песочницы', {
+            details: 'Токен оказался от другого режима — переключили автоматически',
+            variant: 'info',
+          });
+        } catch (secondErr) {
+          // Откатываем режим на исходный и показываем ПЕРВУЮ (более релевантную) ошибку
+          useConnectionStore.getState().setMode(other === 'live' ? 'sandbox' : 'live');
+          throw firstErr;
+        }
+      }
+      const st = useConnectionStore.getState();
+      st.setAccounts(accs);
+      st.setStatus('online');
+      st.setAccount(accs[0]?.id ?? null);
+      // Явное верифицированное сохранение: записали → прочитали → сверили (credvault)
+      if (st.rememberMe) {
+        const save = saveCredentials({ token: t, accountId: st.accountId, mode: st.mode, savedAt: Date.now() });
+        if (!save.ok) {
+          useConnectionStore.getState().setToken(null);
+          useConnectionStore.getState().setStatus('error');
+          return save.error ?? 'Браузер запретил сохранение токена (приватный режим?)';
+        }
+        toast(save.backend === 'localStorage' ? 'Токен сохранён и проверен чтением' : 'Токен сохранён (резервное хранилище)', {
+          details: accs.length > 0 ? `Найдено счетов: ${accs.length}` : 'Счета не найдены',
+          variant: 'success',
+        });
+      } else {
+        toast('Токен действителен (только эта сессия)', {
+          details: 'Хранение выключено — после закрытия вкладки токен нужно ввести заново',
+          variant: 'success',
+        });
+      }
       setStep(2);
       // Прогрев: TLS-сессия + параллельная предзагрузка каталогов (терминал откроется мгновенно)
       warmUpConnection();
       void warmUpMarketData();
-      toast('Токен действителен', {
-        details: accs.length > 0 ? `Найдено счетов: ${accs.length}` : 'Счета не найдены',
-        variant: 'success',
-      });
       return null;
     } catch (e) {
       useConnectionStore.getState().setStatus('error');
