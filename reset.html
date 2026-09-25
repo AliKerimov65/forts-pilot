@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FORTS PILOT — сброс кэша</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0B0E13;color:#E8ECF2;font:15px/1.6 system-ui,sans-serif}
+  .card{max-width:420px;padding:32px;background:#181F2B;border:1px solid #33405A;border-radius:16px;text-align:center}
+  h1{font-size:18px;margin:0 0 12px}
+  p{color:#9AA7BA;margin:0 0 20px}
+  button{background:#3D7FFF;color:#fff;border:0;border-radius:10px;padding:12px 24px;font-size:15px;cursor:pointer}
+  #log{color:#6B7686;font-size:12px;margin-top:16px;white-space:pre-line}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>FORTS PILOT — полный сброс кэша</h1>
+  <p>Нажмите кнопку: будут удалены устаревший service worker и все кэши, затем приложение откроется заново.</p>
+  <button id="btn">Сбросить и открыть приложение</button>
+  <div id="log"></div>
+</div>
+<script>
+document.getElementById('btn').onclick = async () => {
+  const log = (m) => (document.getElementById('log').textContent += m + '\n');
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) { await r.unregister(); log('SW удалён'); }
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const k of keys) { await caches.delete(k); log('Кэш очищен: ' + k); }
+    }
+    log('Готово. Открываю приложение…');
+  } catch (e) { log('Ошибка: ' + e.message); }
+  setTimeout(() => location.replace('./?fresh=' + Date.now()), 900);
+};
+</script>
+</body>
+</html>
