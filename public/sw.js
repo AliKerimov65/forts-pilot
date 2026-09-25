@@ -1,7 +1,7 @@
 /* FORTS PILOT — Service Worker v3
  * network-first для навигации и API; cache-first только для хешированных ассетов.
  * ВАЖНО: SW_VERSION меняется каждый релиз — это триггерит установку нового SW. */
-const SW_VERSION = 'v5.1.2-20260919';
+const SW_VERSION = 'v5.2-20260926';
 const CACHE_STATIC = `forts-pilot-static-${SW_VERSION}`;
 const CACHE_RUNTIME = `forts-pilot-runtime-${SW_VERSION}`;
 
